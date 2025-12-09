@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.env
+*.venv
+env/
+venv/
+build/
+dist/
+*.egg-info/
+*.sqlite3
+
+# VSCode
+.vscode/
+.history/
+.code-workspace
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Migrations
+migrations/*.pyc
