@@ -1,0 +1,55 @@
+# Docker Compose configuration for AI IDE PostgreSQL database
+# This sets up a PostgreSQL 15 database with automatic initialization
+
+version: '3.8'
+
+services:
+  # PostgreSQL database service
+  postgres:
+    image: postgres:15-alpine
+    container_name: ai_ide_postgres
+    
+    # Environment variables for database initialization
+    environment:
+      POSTGRES_USER: ai_ide_user
+      POSTGRES_PASSWORD: ai_ide_password
+      POSTGRES_DB: ai_ide_db
+      # Optional: Set timezone
+      TZ: America/New_York
+    
+    # Port mapping: host:container
+    # Access database at localhost:5432
+    ports:
+      - "5432:5432"
+    
+    # Named volume for persistent data storage
+    # Data persists even when container is removed
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    
+    # Health check to ensure database is ready before dependent services start
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ai_ide_user -d ai_ide_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    
+    # Restart policy: restart unless explicitly stopped
+    restart: unless-stopped
+    
+    # Network configuration
+    networks:
+      - ai_ide_network
+
+# Named volumes definition
+# This volume persists database data across container restarts
+volumes:
+  postgres_data:
+    driver: local
+
+# Network definition
+# Creates an isolated network for service communication
+networks:
+  ai_ide_network:
+    driver: bridge

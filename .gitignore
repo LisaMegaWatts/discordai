@@ -3,10 +3,12 @@ __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
+*.pyc
 *.env
 *.venv
 env/
 venv/
+venv_*/
 build/
 dist/
 *.egg-info/
@@ -28,6 +30,9 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Setup and Development
+postgres_data/
 
 # Migrations
 migrations/*.pyc

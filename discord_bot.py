@@ -7,6 +7,8 @@ from sqlalchemy.orm import sessionmaker
 from models import Base
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import datetime
+import asyncio
+import sys
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://user:password@localhost:5432/ai_ide_db")
 engine = create_async_engine(DATABASE_URL, echo=True)
@@ -194,6 +196,17 @@ if __name__ == "__main__":
     if not DISCORD_TOKEN:
         print("Error: DISCORD_TOKEN not set in environment.")
     else:
+        # Initialize database tables before starting the bot
+        # This ensures all required tables exist before any bot operations
+        try:
+            print("Initializing database tables...")
+            asyncio.run(init_db())
+            print("Database tables initialized successfully.")
+        except Exception as e:
+            print(f"Error initializing database: {e}")
+            print("Bot startup aborted due to database initialization failure.")
+            sys.exit(1)
+        
         # Schedule daily reflection at 8:00 AM America/New_York
         from pytz import timezone
         scheduler.add_job(
