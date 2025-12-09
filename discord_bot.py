@@ -10,6 +10,10 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import datetime
 import asyncio
 import sys
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://user:password@localhost:5432/ai_ide_db")
 engine = create_async_engine(DATABASE_URL, echo=True)
@@ -39,6 +43,25 @@ intents.dm_messages = True
 
 bot = commands.Bot(command_prefix="/", intents=intents)
 scheduler = AsyncIOScheduler()
+
+async def setup_scheduler():
+    """Initialize and start the scheduler with the bot's event loop."""
+    from pytz import timezone
+    scheduler.add_job(
+        daily_reflection_task,
+        "cron",
+        hour=8,
+        minute=0,
+        timezone=timezone("America/New_York"),
+        id="daily_reflection"
+    )
+    scheduler.start()
+    print("Scheduler started successfully.")
+
+@bot.event
+async def setup_hook():
+    """Called when the bot is starting up and the event loop is ready."""
+    await setup_scheduler()
 
 @bot.event
 async def on_ready():
@@ -271,15 +294,4 @@ if __name__ == "__main__":
             print("Bot startup aborted due to database initialization failure.")
             sys.exit(1)
         
-        # Schedule daily reflection at 8:00 AM America/New_York
-        from pytz import timezone
-        scheduler.add_job(
-            daily_reflection_task,
-            "cron",
-            hour=8,
-            minute=0,
-            timezone=timezone("America/New_York"),
-            id="daily_reflection"
-        )
-        scheduler.start()
         bot.run(DISCORD_TOKEN)
