@@ -10,6 +10,8 @@ This script:
 """
 
 import asyncio
+import glob
+import logging
 import os
 import sys
 import time
@@ -18,6 +20,9 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.exc import OperationalError
 
 from models import Base
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Load environment variables from .env file
 load_dotenv()
@@ -128,6 +133,86 @@ def create_tables():
         return False
 
 
+def run_migrations():
+    """Run all SQL migration files in order."""
+    if not engine:
+        print("[ERROR] Cannot run migrations: engine not initialized")
+        return False
+    
+    migration_dir = "migrations"
+    
+    # Check if migrations directory exists
+    if not os.path.exists(migration_dir):
+        print(f"[INFO] No migrations directory found at {migration_dir}")
+        return True
+    
+    # Find all .sql files in migrations directory
+    migration_files = sorted(glob.glob(f"{migration_dir}/*.sql"))
+    
+    if not migration_files:
+        print(f"[INFO] No migration files found in {migration_dir}")
+        return True
+    
+    print(f"[MIGRATE] Running {len(migration_files)} migration(s)...")
+    
+    for migration_file in migration_files:
+        migration_name = os.path.basename(migration_file)
+        print(f"  → {migration_name}")
+        logging.info(f"Running migration: {migration_file}")
+        
+        # Each migration gets its own transaction
+        with engine.begin() as conn:
+            with open(migration_file, 'r', encoding='utf-8') as f:
+                sql = f.read()
+            
+            # Split by semicolon and execute each statement
+            statements = [s.strip() for s in sql.split(';') if s.strip() and not s.strip().startswith('--')]
+            
+            success_count = 0
+            skip_count = 0
+            
+            for i, statement in enumerate(statements):
+                # Skip comments
+                if statement.startswith('--'):
+                    continue
+                
+                try:
+                    # Create a savepoint before each statement
+                    savepoint_name = f"stmt_{i}"
+                    conn.execute(text(f"SAVEPOINT {savepoint_name}"))
+                    
+                    # Execute the statement
+                    conn.execute(text(statement))
+                    
+                    # Release savepoint on success
+                    conn.execute(text(f"RELEASE SAVEPOINT {savepoint_name}"))
+                    success_count += 1
+                    
+                except Exception as stmt_error:
+                    # Rollback to savepoint on error
+                    try:
+                        conn.execute(text(f"ROLLBACK TO SAVEPOINT {savepoint_name}"))
+                    except:
+                        pass  # Savepoint might not exist if SAVEPOINT failed
+                    
+                    error_msg = str(stmt_error).lower()
+                    # Check if it's an "already exists" error
+                    if 'already exists' in error_msg or 'duplicate' in error_msg:
+                        logging.warning(f"Statement already applied (skipped): {statement[:100]}...")
+                        skip_count += 1
+                    else:
+                        # Real error - log and raise
+                        logging.error(f"Error executing statement: {statement[:100]}...")
+                        logging.error(f"Error: {stmt_error}")
+                        raise
+            
+            logging.info(f"Migration {migration_file} completed: {success_count} new, {skip_count} skipped")
+            print(f"    ✓ {migration_name} ({success_count} new, {skip_count} skipped)")
+    
+    print("[OK] All migrations completed successfully")
+    return True
+
+
 def main():
     """Main execution flow."""
     print("=" * 60)
@@ -153,6 +238,14 @@ def main():
     
     # Step 4: Create tables
     if not create_tables():
+        sys.exit(1)
+    
+    # Step 5: Run migrations
+    if not run_migrations():
+        print("\n[INFO] Migration troubleshooting tips:")
+        print("  - Check migration SQL syntax")
+        print("  - Verify all required tables exist")
+        print("  - Review error messages above")
         sys.exit(1)
     
     # Success!

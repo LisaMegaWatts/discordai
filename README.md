@@ -1,16 +1,104 @@
 # DiscordAI Repository
 
 ## Overview
-DiscordAI is a Python-based Discord bot with integrated GitHub and database support. It is designed for extensibility, automation, and image API integration.
+DiscordAI is an intelligent, conversational Discord bot powered by Claude AI. It features natural language understanding, semantic intent detection, conversation memory, and seamless integrations with GitHub and image generation APIs. The bot can understand what you want through natural conversation while maintaining backward compatibility with traditional slash commands.
+
+## 🌟 Conversational Features (v2.0)
+
+### Talk Naturally to Your Bot
+No more memorizing command syntax! Just talk to the bot like you would to a person:
+
+**Before (v1.x)**:
+```
+/generate-image create a photorealistic sunset over mountains
+```
+
+**Now (v2.0)**:
+```
+"Can you create an image of a sunset over mountains? Make it photorealistic."
+```
+
+### Key Features
+
+- **🧠 Semantic Intent Detection**: Understands what you want through natural language powered by Claude AI
+- **💬 Conversation Memory**: Remembers context from your previous messages (30-minute sessions)
+- **😊 Natural Responses**: Engages in friendly conversation with appropriate emoji usage
+- **🎯 Intent-Based Actions**: Automatically routes requests to the right functionality
+- **⚡ Performance Optimized**: Response caching, parallel processing, and quick templates
+- **📊 Analytics & Logging**: Tracks intent detection accuracy and usage patterns
+- **🔄 Backward Compatible**: All original slash commands still work perfectly
+
+### Supported Intents
+
+| Intent | Description | Example |
+|--------|-------------|---------|
+| **Generate Image** | Create AI-generated images | "draw me a cat wearing a wizard hat" |
+| **Submit Feature** | Request new features with automatic GitHub PR creation | "I'd like to add dark mode support" |
+| **Get Status** | Check bot and request status | "are you working?" |
+| **Get Help** | Learn about capabilities | "what can you do?" |
+| **General Conversation** | Natural chat interaction | "hello!", "thanks!" |
+| **Action Query** | Retrieve previous results | "show me my last image" |
+
+### Natural Language Examples
+
+```
+✨ Image Generation:
+"create a cyberpunk cityscape at night with neon lights"
+"draw a cute robot in anime style"
+"generate a professional logo with a mountain theme"
+
+💡 Feature Requests:
+"add support for voice message transcription"
+"I want to be able to schedule reminders"
+"feature request: export conversation history"
+
+💬 Conversations:
+"hello! what can you help me with?"
+"that's awesome, thanks!"
+"show me what you created yesterday"
+```
+
+### Documentation
+
+- **[User Guide](docs/USER_GUIDE.md)** - Complete guide to interacting with the bot
+- **[Testing Guide](docs/TESTING_GUIDE.md)** - Comprehensive testing instructions
+- **[Architecture Documentation](docs/conversational_bot_architecture.md)** - Technical implementation details
+- **[Changelog](CHANGELOG.md)** - Version history and updates
 
 ## Architecture
 
-- **[`discord_bot.py`](discord_bot.py)**: Main entry point for the Discord bot.
-- **[`github_integration.py`](github_integration.py)**: Handles GitHub API interactions.
-- **[`models.py`](models.py)**: Database models.
-- **[`crud.py`](crud.py)**: Database CRUD operations.
-- **[`setup_db.py`](setup_db.py)**: Automated database initialization script.
-- **`migrations/`**: SQL migration scripts.
+### Core Components
+
+- **[`discord_bot.py`](discord_bot.py)**: Main entry point with conversational message processing
+- **[`github_integration.py`](github_integration.py)**: GitHub API interactions for feature requests
+- **[`models.py`](models.py)**: Database models including conversation tables
+- **[`crud.py`](crud.py)**: Database CRUD operations
+- **[`setup_db.py`](setup_db.py)**: Automated database initialization script
+- **`migrations/`**: SQL migration scripts
+  - [`001_create_tables.sql`](migrations/001_create_tables.sql) - Original tables
+  - [`002_add_conversation_tables.sql`](migrations/002_add_conversation_tables.sql) - Conversational features
+
+### New Services (v2.0)
+
+- **[`services/intent_service.py`](services/intent_service.py)**: Semantic intent detection using Claude
+- **[`services/conversation_service.py`](services/conversation_service.py)**: Conversation context and session management
+- **[`services/response_service.py`](services/response_service.py)**: Intelligent response generation
+- **[`services/cache_service.py`](services/cache_service.py)**: Response caching for performance
+- **[`services/performance_utils.py`](services/performance_utils.py)**: Performance optimization utilities
+
+### Database Schema
+
+**Original Tables**:
+- `feature_requests` - User feature submissions
+- `generated_images` - AI-generated image metadata
+- `scheduled_tasks` - Task scheduling
+- `reflection_logs` - Daily reflection summaries
+
+**New Tables (v2.0)**:
+- `conversation_sessions` - User conversation sessions
+- `conversation_history` - Message history for context
+- `user_preferences` - User customization settings
+- `intent_logs` - Intent detection analytics
 
 ## Prerequisites
 
@@ -274,11 +362,41 @@ docker-compose restart
 
 See [`.env.example`](.env.example) for all required variables:
 
+### Required Variables
+
 - **`DISCORD_TOKEN`**: Your Discord bot token from the [Discord Developer Portal](https://discord.com/developers/applications)
-- **`DATABASE_URL`**: PostgreSQL connection string (set automatically)
-- **`GITHUB_TOKEN`**: Personal access token from [GitHub Settings](https://github.com/settings/tokens)
-- **`IMAGE_API_KEY`**: API key for image generation service
-- Additional integration-specific secrets as needed
+- **`ANTHROPIC_API_KEY`**: Anthropic API key for Claude AI (conversational features) - [Get API Key](https://console.anthropic.com/)
+- **`DATABASE_URL`**: PostgreSQL connection string (set automatically by Docker Compose)
+
+### Optional Variables
+
+- **`OPENROUTER_API_KEY`**: API key for OpenRouter image generation service
+- **`OPENROUTER_IMAGE_MODEL`**: Image generation model (default: `stabilityai/stable-diffusion-xl`)
+- **`ANTHROPIC_MODEL`**: Claude model to use (default: `claude-3-5-sonnet-20241022`)
+- **`GITHUB_TOKEN`**: Personal access token from [GitHub Settings](https://github.com/settings/tokens) for feature request PRs
+- **`GITHUB_REPO`**: Repository in format `owner/repo` for feature requests
+- **`REFLECTION_CHANNEL_ID`**: Discord channel ID for daily reflection messages
+
+### Example `.env` File
+
+```bash
+# Required
+DISCORD_TOKEN=your_discord_bot_token_here
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
+DATABASE_URL=postgresql+asyncpg://ai_ide_user:ai_ide_password@localhost:5432/ai_ide_db
+
+# Optional - Image Generation
+OPENROUTER_API_KEY=your_openrouter_key_here
+OPENROUTER_IMAGE_MODEL=stabilityai/stable-diffusion-xl
+
+# Optional - GitHub Integration
+GITHUB_TOKEN=your_github_token_here
+GITHUB_REPO=username/repository
+
+# Optional - Advanced
+ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
+REFLECTION_CHANNEL_ID=123456789012345678
+```
 
 ## Usage
 
@@ -287,10 +405,27 @@ See [`.env.example`](.env.example) for all required variables:
 - **GitHub Integration**: Configure your GitHub token in [`.env`](.env)
 - **Image API**: Set your image API key in [`.env`](.env)
 
-## Commands
+## Commands & Interactions
 
-- Bot commands are defined in [`discord_bot.py`](discord_bot.py)
-- GitHub automation commands are in [`github_integration.py`](github_integration.py)
+### Natural Language (Primary Method)
+
+Just talk to the bot naturally:
+- "create an image of a sunset"
+- "I'd like to request a new feature"
+- "what can you do?"
+- "show me my last image"
+
+See the **[User Guide](docs/USER_GUIDE.md)** for complete examples.
+
+### Slash Commands (Backward Compatible)
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `/generate-image <prompt>` | Generate an AI image | `/generate-image a mountain landscape` |
+| `/submit-feature <title> \| <desc>` | Submit feature request | `/submit-feature Dark Mode \| Add theme support` |
+| `/get-image [id]` | Retrieve generated image | `/get-image` or `/get-image 123` |
+| `/status` | Check bot status | `/status` |
+| `/request-feature` | Alternative feature submission | `/request-feature` |
 
 ## Troubleshooting
 

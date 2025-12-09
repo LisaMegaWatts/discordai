@@ -1,5 +1,8 @@
-from models import FeatureRequest, GeneratedImage, ScheduledTask, ReflectionLog
+from models import FeatureRequest, GeneratedImage, ScheduledTask, ReflectionLog, ConversationSessions, ConversationHistory, UserPreferences, IntentLogs
 from sqlalchemy.future import select
+from sqlalchemy import func
+import uuid
+from typing import Optional
 
 # FeatureRequest CRUD
 async def create_feature_request(session, user_id, title, description):
@@ -112,3 +115,157 @@ async def delete_reflection_log(session, rl_id):
         await session.delete(rl)
         await session.commit()
     return rl
+
+# ConversationSessions CRUD
+async def create_conversation_session(session, user_id: str, session_id: Optional[str] = None) -> ConversationSessions:
+    if session_id is None:
+        session_id = str(uuid.uuid4())
+    cs = ConversationSessions(id=session_id, user_id=user_id)
+    session.add(cs)
+    await session.commit()
+    await session.refresh(cs)
+    return cs
+
+async def get_conversation_session(session, session_id: str) -> Optional[ConversationSessions]:
+    result = await session.execute(select(ConversationSessions).where(ConversationSessions.id == session_id))
+    return result.scalar_one_or_none()
+
+async def get_active_session_for_user(session, user_id: str) -> Optional[ConversationSessions]:
+    result = await session.execute(
+        select(ConversationSessions)
+        .where(ConversationSessions.user_id == user_id)
+        .where(ConversationSessions.status == "active")
+        .order_by(ConversationSessions.last_active.desc())
+    )
+    return result.scalars().first()
+
+async def update_session_activity(session, session_id: str, message_count_increment: int = 1) -> Optional[ConversationSessions]:
+    cs = await get_conversation_session(session, session_id)
+    if cs:
+        cs.message_count += message_count_increment
+        cs.last_active = func.now()
+        await session.commit()
+        await session.refresh(cs)
+    return cs
+
+async def end_conversation_session(session, session_id: str) -> Optional[ConversationSessions]:
+    cs = await get_conversation_session(session, session_id)
+    if cs:
+        cs.status = "ended"
+        await session.commit()
+        await session.refresh(cs)
+    return cs
+
+# ConversationHistory CRUD
+async def create_conversation_message(
+    session,
+    session_id: str,
+    user_id: str,
+    message: str,
+    role: str,
+    intent: Optional[str] = None,
+    confidence: Optional[float] = None
+) -> ConversationHistory:
+    ch = ConversationHistory(
+        session_id=session_id,
+        user_id=user_id,
+        message=message,
+        role=role,
+        intent=intent,
+        confidence=confidence
+    )
+    session.add(ch)
+    await session.commit()
+    await session.refresh(ch)
+    return ch
+
+async def get_conversation_history(session, session_id: str, limit: int = 50) -> list[ConversationHistory]:
+    result = await session.execute(
+        select(ConversationHistory)
+        .where(ConversationHistory.session_id == session_id)
+        .order_by(ConversationHistory.created_at.asc())
+        .limit(limit)
+    )
+    return result.scalars().all()
+
+async def get_user_recent_messages(session, user_id: str, limit: int = 10) -> list[ConversationHistory]:
+    result = await session.execute(
+        select(ConversationHistory)
+        .where(ConversationHistory.user_id == user_id)
+        .order_by(ConversationHistory.created_at.desc())
+        .limit(limit)
+    )
+    return result.scalars().all()
+
+# UserPreferences CRUD
+async def create_user_preferences(session, user_id: str, **kwargs) -> UserPreferences:
+    up = UserPreferences(user_id=user_id, **kwargs)
+    session.add(up)
+    await session.commit()
+    await session.refresh(up)
+    return up
+
+async def get_user_preferences(session, user_id: str) -> UserPreferences:
+    result = await session.execute(select(UserPreferences).where(UserPreferences.user_id == user_id))
+    up = result.scalar_one_or_none()
+    if up is None:
+        # Auto-create with defaults if not exists
+        up = await create_user_preferences(session, user_id)
+    return up
+
+async def update_user_preferences(session, user_id: str, **kwargs) -> Optional[UserPreferences]:
+    up = await get_user_preferences(session, user_id)
+    if up:
+        for key, value in kwargs.items():
+            setattr(up, key, value)
+        await session.commit()
+        await session.refresh(up)
+    return up
+
+# IntentLogs CRUD
+async def create_intent_log(
+    session,
+    user_id: str,
+    message: str,
+    detected_intent: str,
+    confidence: float,
+    entities: Optional[dict] = None,
+    processing_time_ms: Optional[int] = None
+) -> IntentLogs:
+    il = IntentLogs(
+        user_id=user_id,
+        message=message,
+        detected_intent=detected_intent,
+        confidence=confidence,
+        entities=entities,
+        processing_time_ms=processing_time_ms
+    )
+    session.add(il)
+    await session.commit()
+    await session.refresh(il)
+    return il
+
+async def get_intent_logs(session, user_id: Optional[str] = None, limit: int = 100) -> list[IntentLogs]:
+    query = select(IntentLogs).order_by(IntentLogs.created_at.desc()).limit(limit)
+    if user_id is not None:
+        query = query.where(IntentLogs.user_id == user_id)
+    result = await session.execute(query)
+    return result.scalars().all()
+
+async def get_intent_accuracy_stats(session) -> dict:
+    # Get average confidence by intent type
+    result = await session.execute(
+        select(
+            IntentLogs.detected_intent,
+            func.avg(IntentLogs.confidence).label('avg_confidence'),
+            func.count(IntentLogs.id).label('count')
+        )
+        .group_by(IntentLogs.detected_intent)
+    )
+    stats = {}
+    for row in result:
+        stats[row.detected_intent] = {
+            'average_confidence': float(row.avg_confidence),
+            'count': row.count
+        }
+    return stats

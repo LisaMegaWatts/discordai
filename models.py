@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, ForeignKey
+from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, ForeignKey, Float, JSON, Index
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func
 
@@ -36,3 +36,68 @@ class ReflectionLog(Base):
     user_id = Column(String, nullable=False)
     content = Column(Text, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class ConversationSessions(Base):
+    __tablename__ = "conversation_sessions"
+    id = Column(String(36), primary_key=True)  # UUID
+    user_id = Column(String(50), nullable=False, index=True)
+    started_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_active = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    message_count = Column(Integer, default=0)
+    status = Column(String(20), default="active")
+    
+    def __repr__(self):
+        return f"<ConversationSession(id={self.id}, user_id={self.user_id}, status={self.status}, messages={self.message_count})>"
+
+class ConversationHistory(Base):
+    __tablename__ = "conversation_history"
+    __table_args__ = (
+        Index('ix_conversation_history_user_id', 'user_id'),
+        Index('ix_conversation_history_session_id', 'session_id'),
+        Index('ix_conversation_history_created_at', 'created_at'),
+    )
+    
+    id = Column(Integer, primary_key=True)
+    session_id = Column(String(36), ForeignKey('conversation_sessions.id'), nullable=False)
+    user_id = Column(String(50), nullable=False)
+    message = Column(Text, nullable=False)
+    role = Column(String(20), nullable=False)  # "user" or "assistant"
+    intent = Column(String(50), nullable=True)
+    confidence = Column(Float, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    def __repr__(self):
+        return f"<ConversationHistory(id={self.id}, session_id={self.session_id}, role={self.role}, intent={self.intent})>"
+
+class UserPreferences(Base):
+    __tablename__ = "user_preferences"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String(50), unique=True, nullable=False, index=True)
+    tone_preference = Column(String(20), default="friendly")  # friendly, professional, casual, enthusiastic
+    emoji_density = Column(String(20), default="moderate")  # none, low, moderate, high
+    language = Column(String(10), default="en")
+    context_retention = Column(Boolean, default=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    def __repr__(self):
+        return f"<UserPreferences(user_id={self.user_id}, tone={self.tone_preference}, emoji={self.emoji_density})>"
+
+class IntentLogs(Base):
+    __tablename__ = "intent_logs"
+    __table_args__ = (
+        Index('ix_intent_logs_user_id', 'user_id'),
+        Index('ix_intent_logs_created_at', 'created_at'),
+    )
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String(50), nullable=False)
+    message = Column(Text, nullable=False)
+    detected_intent = Column(String(50), nullable=False)
+    confidence = Column(Float, nullable=False)
+    entities = Column(JSON, nullable=True)
+    processing_time_ms = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    def __repr__(self):
+        return f"<IntentLog(id={self.id}, user_id={self.user_id}, intent={self.detected_intent}, confidence={self.confidence})>"
