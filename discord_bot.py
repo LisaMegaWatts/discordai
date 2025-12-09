@@ -12,6 +12,14 @@ import asyncio
 import sys
 from dotenv import load_dotenv
 
+# Import new conversational services
+from services.intent_service import IntentDetectionService
+from services.conversation_service import ConversationContextManager
+from services.response_service import ResponseGenerationService
+from services.cache_service import ResponseCache
+from services.performance_utils import PerformanceUtils, CacheWarmer
+from crud import create_intent_log
+
 # Load environment variables from .env file
 load_dotenv()
 
@@ -28,12 +36,12 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_IMAGE_MODEL = os.getenv("OPENROUTER_IMAGE_MODEL", "stabilityai/stable-diffusion-xl")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
+ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
 
 # Initialize Anthropic client for bot/coding AI
 anthropic_client = None
 if ANTHROPIC_API_KEY:
-    anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    anthropic_client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -43,6 +51,19 @@ intents.dm_messages = True
 
 bot = commands.Bot(command_prefix="/", intents=intents)
 scheduler = AsyncIOScheduler()
+
+# Initialize conversational services
+intent_service = IntentDetectionService(anthropic_client)
+response_cache = ResponseCache(ttl_seconds=300, max_size=1000)
+
+# Background task to clear expired cache entries
+async def cache_cleanup_task():
+    """Periodically clear expired cache entries."""
+    while True:
+        await asyncio.sleep(300)  # Run every 5 minutes
+        await response_cache.clear_expired()
+        stats = response_cache.get_stats()
+        print(f"Cache stats: {stats}")
 
 async def setup_scheduler():
     """Initialize and start the scheduler with the bot's event loop."""
@@ -62,6 +83,12 @@ async def setup_scheduler():
 async def setup_hook():
     """Called when the bot is starting up and the event loop is ready."""
     await setup_scheduler()
+    
+    # Start cache cleanup background task
+    asyncio.create_task(cache_cleanup_task())
+    
+    # Cache warming removed - cache will populate naturally during use
+    # This prevents startup errors with unhashable dict types
 
 @bot.event
 async def on_ready():
@@ -90,12 +117,234 @@ async def on_ready():
 
 @bot.event
 async def on_message(message):
-    # Respond to @mentions and DMs
+    """Process all messages through semantic intent detection pipeline."""
+    # Ignore bot's own messages
     if message.author == bot.user:
         return
-    if bot.user in message.mentions or isinstance(message.channel, discord.DMChannel):
-        await message.channel.send("Hello! Use `/request-feature`, `/generate-image`, or `/status`.")
+    
+    # Process commands first (for backward compatibility)
     await bot.process_commands(message)
+    
+    # If message was a command, skip conversational processing
+    ctx = await bot.get_context(message)
+    if ctx.valid:
+        return
+    
+    # Process all non-command messages through conversational pipeline
+    try:
+        async with message.channel.typing():
+            response_text = await process_conversational_message(message)
+            if response_text:
+                await message.channel.send(response_text)
+    except Exception as e:
+        print(f"Error processing conversational message: {e}")
+        await message.channel.send("I encountered an error processing your message. Please try again or use a slash command.")
+
+async def process_conversational_message(message: discord.Message) -> str:
+    """Process message through semantic intent detection pipeline with caching and optimizations."""
+    try:
+        user_id = str(message.author.id)
+        message_text = message.content
+        
+        # Truncate extremely long messages
+        message_text = PerformanceUtils.truncate_long_messages(message_text)
+        
+        # Check cache first for quick responses
+        cached_response = await response_cache.get(message_text)
+        if cached_response:
+            print(f"Cache hit for message: {message_text[:50]}...")
+            return cached_response
+        
+        async with AsyncSessionLocal() as db_session:
+            # Initialize services with database session
+            conversation_manager = ConversationContextManager(db_session)
+            response_service = ResponseGenerationService(anthropic_client, db_session)
+            
+            # Parallel operations: Get session and detect intent concurrently
+            session_task = conversation_manager.get_or_create_session(user_id)
+            intent_task = intent_service.detect_intent(message_text)
+            
+            session, intent_result = await asyncio.gather(session_task, intent_task)
+            
+            intent = intent_result['intent']
+            
+            # Check if we can use a quick template response
+            if PerformanceUtils.should_use_quick_response(intent, len(message_text)):
+                quick_response = PerformanceUtils.get_quick_response_template(intent)
+                if quick_response:
+                    # Cache the quick response
+                    await response_cache.set(message_text, quick_response, intent)
+                    
+                    # Still log intent and store messages for analytics
+                    await create_intent_log(
+                        db_session,
+                        user_id,
+                        message_text,
+                        intent,
+                        intent_result.get('confidence', 0.0),
+                        intent_result.get('entities', {})
+                    )
+                    
+                    await conversation_manager.add_message(session.id, user_id, message_text, "user", intent, intent_result.get('confidence', 0.0))
+                    await conversation_manager.add_message(session.id, user_id, quick_response, "assistant")
+                    
+                    return quick_response
+            
+            # Log intent detection
+            await create_intent_log(
+                db_session,
+                user_id,
+                message_text,
+                intent,
+                intent_result.get('confidence', 0.0),
+                intent_result.get('entities', {})
+            )
+            
+            # Get conversation context with limited window (last 10 messages)
+            context = await conversation_manager.get_context(session.id, limit=10)
+            
+            # Handle intent-specific actions
+            action_result = None
+            entities = intent_result.get('entities', {})
+            
+            if intent in ['generate_image', 'submit_feature']:
+                action_result = await handle_intent_action(intent, entities, message)
+            
+            # Generate response based on intent and context
+            response_text = await response_service.generate_response(
+                user_message=message_text,
+                intent=intent,
+                entities=intent_result.get('entities', {}),
+                conversation_context=context,
+                user_id=user_id
+            )
+            
+            # Store messages in conversation history (parallel)
+            store_user_msg = conversation_manager.add_message(session.id, user_id, message_text, "user", intent, intent_result.get('confidence', 0.0))
+            store_assistant_msg = conversation_manager.add_message(session.id, user_id, response_text, "assistant")
+            
+            await asyncio.gather(store_user_msg, store_assistant_msg)
+            
+            # Cache response if intent is cacheable
+            if response_cache.is_cacheable_intent(intent):
+                await response_cache.set(message_text, response_text, intent)
+            
+            return response_text
+            
+    except Exception as e:
+        print(f"Error in process_conversational_message: {e}")
+        raise
+
+async def handle_intent_action(intent: str, entities: dict, message: discord.Message) -> str:
+    """Execute actions based on detected intent."""
+    user_id = str(message.author.id)
+    
+    try:
+        if intent == 'generate_image':
+            prompt = entities.get('image_prompt', entities.get('prompt', ''))
+            if not prompt:
+                return "I couldn't extract a prompt for image generation. Please provide a description."
+            result = await generate_image_from_prompt(prompt, user_id, message)
+            return result
+            
+        elif intent == 'submit_feature':
+            title = entities.get('feature_title', 'Feature Request')
+            description = entities.get('feature_description', entities.get('description', ''))
+            if not description:
+                return "I couldn't extract a feature description. Please provide more details."
+            result = await submit_feature_from_text(title, description, user_id, message)
+            return result
+            
+        return None
+        
+    except Exception as e:
+        print(f"Error handling intent action: {e}")
+        return f"I encountered an error while processing your request: {str(e)}"
+
+async def generate_image_from_prompt(prompt: str, user_id: str, message: discord.Message) -> str:
+    """Generate image from prompt (extracted from /generate-image command)."""
+    if not OPENROUTER_API_KEY:
+        return "Error: OpenRouter API key not configured. Please contact the administrator."
+    
+    try:
+        # Call OpenRouter API for image generation
+        headers = {
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://discord-ai-bot",
+            "X-Title": "Discord AI Bot"
+        }
+        
+        payload = {
+            "model": OPENROUTER_IMAGE_MODEL,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+        }
+        
+        response = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=60
+        )
+        response.raise_for_status()
+        
+        result = response.json()
+        # Extract image URL from response
+        if 'choices' in result and len(result['choices']) > 0:
+            content = result['choices'][0]['message']['content']
+            image_url = content.strip()
+        else:
+            return "Error: Unexpected response format from OpenRouter API."
+
+        # Download image
+        import aiohttp
+        import uuid
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(image_url) as resp:
+                if resp.status == 200:
+                    img_bytes = await resp.read()
+                    # Save locally
+                    os.makedirs("generated_images", exist_ok=True)
+                    filename = f"{uuid.uuid4().hex}_{int(datetime.datetime.utcnow().timestamp())}.png"
+                    filepath = os.path.join("generated_images", filename)
+                    with open(filepath, "wb") as f:
+                        f.write(img_bytes)
+                    # Store metadata in DB
+                    async with AsyncSessionLocal() as db_session:
+                        from crud import create_generated_image
+                        db_image = await create_generated_image(db_session, user_id, filepath, prompt)
+                    # Send image to channel
+                    await message.channel.send(file=discord.File(filepath))
+                    return f"I've generated an image for: '{prompt}'"
+                else:
+                    return "Failed to download generated image."
+    except Exception as e:
+        return f"Image generation failed: {str(e)}"
+
+async def submit_feature_from_text(title: str, description: str, user_id: str, message: discord.Message) -> str:
+    """Submit feature request from extracted text."""
+    try:
+        discord_link = message.jump_url
+        
+        # Store feature request in PostgreSQL
+        from crud import create_feature_request
+        async with AsyncSessionLocal() as session:
+            fr = await create_feature_request(session, user_id, title, description)
+        
+        # Create GitHub PR
+        from github_integration import create_feature_branch_and_pr
+        pr_url = create_feature_branch_and_pr(title, description, discord_link)
+        
+        return f"I've submitted your feature request: '{title}'. GitHub PR: {pr_url}"
+        
+    except Exception as e:
+        return f"Failed to submit feature request: {str(e)}"
 
 async def daily_reflection_task():
     # Analyze codebase changes (stub: count lines changed in migrations/001_create_tables.sql)
