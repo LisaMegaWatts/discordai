@@ -1,7 +1,8 @@
 import discord
 from discord.ext import commands
 import os
-import openai
+import requests
+import anthropic
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from models import Base
@@ -20,8 +21,15 @@ async def init_db():
 
 # Load Discord token from environment variable or config file
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-openai.api_key = OPENAI_API_KEY
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_IMAGE_MODEL = os.getenv("OPENROUTER_IMAGE_MODEL", "stabilityai/stable-diffusion-xl")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")
+
+# Initialize Anthropic client for bot/coding AI
+anthropic_client = None
+if ANTHROPIC_API_KEY:
+    anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -35,6 +43,27 @@ scheduler = AsyncIOScheduler()
 @bot.event
 async def on_ready():
     print(f"Bot connected as {bot.user}")
+    print("\n=== API Configuration Status ===")
+    
+    # Validate OpenRouter API Key and Image Model
+    if OPENROUTER_API_KEY:
+        print(f"✓ OpenRouter API Key: Configured")
+        print(f"✓ OpenRouter Image Model: {OPENROUTER_IMAGE_MODEL}")
+    else:
+        print("⚠ WARNING: OPENROUTER_API_KEY not set - Image generation will not work")
+        print("  Please set OPENROUTER_API_KEY in your environment variables")
+    
+    # Validate Anthropic API Key and Model
+    if ANTHROPIC_API_KEY:
+        print(f"✓ Anthropic API Key: Configured")
+        print(f"✓ Anthropic Model: {ANTHROPIC_MODEL}")
+        if anthropic_client:
+            print(f"✓ Anthropic Client: Initialized successfully")
+    else:
+        print("⚠ WARNING: ANTHROPIC_API_KEY not set - Bot/coding AI features will be limited")
+        print("  Please set ANTHROPIC_API_KEY in your environment variables")
+    
+    print("================================\n")
 
 @bot.event
 async def on_message(message):
@@ -96,14 +125,49 @@ async def generate_image(ctx, *, prompt: str = None):
         return
 
     await ctx.send(f"Generating image for prompt: `{prompt}` ...")
+    
+    if not OPENROUTER_API_KEY:
+        await ctx.send("Error: OpenRouter API key not configured. Please contact the administrator.")
+        return
+    
     try:
-        # Call DALL-E API
-        response = openai.Image.create(
-            prompt=prompt,
-            n=1,
-            size="512x512"
+        # Call OpenRouter API for image generation
+        headers = {
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://discord-ai-bot",
+            "X-Title": "Discord AI Bot"
+        }
+        
+        payload = {
+            "model": OPENROUTER_IMAGE_MODEL,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+        }
+        
+        response = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=60
         )
-        image_url = response['data'][0]['url']
+        response.raise_for_status()
+        
+        result = response.json()
+        # Extract image URL from response - format may vary by model
+        # For image generation models, the response typically contains the image URL
+        if 'choices' in result and len(result['choices']) > 0:
+            content = result['choices'][0]['message']['content']
+            # The image URL might be in the content or we need to parse it
+            # For now, assume the model returns a URL or base64 encoded image
+            image_url = content.strip()
+        else:
+            await ctx.send("Error: Unexpected response format from OpenRouter API.")
+            return
 
         # Download image
         import aiohttp

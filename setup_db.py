@@ -13,21 +13,35 @@ import asyncio
 import os
 import sys
 import time
-from sqlalchemy import text
+from dotenv import load_dotenv
+from sqlalchemy import create_engine, text
 from sqlalchemy.exc import OperationalError
 
-from models import engine, Base
+from models import Base
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 def check_database_url():
     """Check if DATABASE_URL environment variable is set."""
     database_url = os.getenv('DATABASE_URL')
     if not database_url:
-        print("❌ ERROR: DATABASE_URL environment variable is not set")
+        print("[ERROR] DATABASE_URL environment variable is not set")
         print("Please set DATABASE_URL in your .env file or environment")
         return False
-    print(f"✓ DATABASE_URL is configured")
+    print("[OK] DATABASE_URL is configured")
     return True
+
+
+# Get database URL (will be validated in check_database_url)
+database_url = os.getenv("DATABASE_URL")
+
+# Create database engine (only if DATABASE_URL is set)
+if database_url:
+    engine = create_engine(database_url.replace('+asyncpg', ''), echo=True)
+else:
+    engine = None
 
 
 def wait_for_database(max_wait_seconds=30):
@@ -40,7 +54,11 @@ def wait_for_database(max_wait_seconds=30):
     Returns:
         bool: True if database is ready, False otherwise
     """
-    print(f"⏳ Waiting for database to be ready (max {max_wait_seconds}s)...")
+    if not engine:
+        print("[ERROR] Cannot wait for database: engine not initialized")
+        return False
+    
+    print(f"[WAIT] Waiting for database to be ready (max {max_wait_seconds}s)...")
     start_time = time.time()
     attempt = 0
     
@@ -51,12 +69,12 @@ def wait_for_database(max_wait_seconds=30):
             with engine.connect() as connection:
                 connection.execute(text("SELECT 1"))
                 elapsed = time.time() - start_time
-                print(f"✓ Database is ready (connected after {elapsed:.1f}s, attempt #{attempt})")
+                print(f"[OK] Database is ready (connected after {elapsed:.1f}s, attempt #{attempt})")
                 return True
         except OperationalError as e:
             elapsed = time.time() - start_time
             if elapsed >= max_wait_seconds:
-                print(f"❌ Database connection timeout after {max_wait_seconds}s")
+                print(f"[ERROR] Database connection timeout after {max_wait_seconds}s")
                 print(f"Last error: {str(e)}")
                 return False
             
@@ -70,41 +88,50 @@ def wait_for_database(max_wait_seconds=30):
 
 def test_database_connection():
     """Test database connection with a simple query."""
-    print("🔍 Testing database connection...")
+    if not engine:
+        print("[ERROR] Cannot test connection: engine not initialized")
+        return False
+    
+    print("[TEST] Testing database connection...")
     try:
         with engine.connect() as connection:
             result = connection.execute(text("SELECT version()"))
             version = result.fetchone()[0]
-            print(f"✓ Connected to PostgreSQL")
+            print("[OK] Connected to PostgreSQL")
             print(f"  Database version: {version.split(',')[0]}")
             return True
     except Exception as e:
-        print(f"❌ Failed to connect to database: {str(e)}")
+        print(f"[ERROR] Failed to connect to database: {str(e)}")
         return False
 
 
 def create_tables():
     """Create all database tables defined in models."""
-    print("📊 Creating database tables...")
+    if not engine:
+        print("[ERROR] Cannot create tables: engine not initialized")
+        return False
+    
+    print("[CREATE] Creating database tables...")
     try:
         Base.metadata.create_all(bind=engine)
-        print("✓ All tables created successfully")
+        print("[OK] All tables created successfully")
         
         # List created tables
-        inspector = engine.dialect.get_inspector(engine.connect())
+        from sqlalchemy import inspect
+        inspector = inspect(engine)
         tables = inspector.get_table_names()
         if tables:
             print(f"  Created tables: {', '.join(tables)}")
         return True
     except Exception as e:
-        print(f"❌ Failed to create tables: {str(e)}")
+        print(f"[ERROR] Failed to create tables: {str(e)}")
         return False
 
 
 def main():
     """Main execution flow."""
     print("=" * 60)
-    print("🚀 Database Setup Script")
+    print("DATABASE SETUP SCRIPT")
     print("=" * 60)
     
     # Step 1: Check DATABASE_URL
@@ -113,7 +140,7 @@ def main():
     
     # Step 2: Wait for database to be ready
     if not wait_for_database(max_wait_seconds=30):
-        print("\n💡 Troubleshooting tips:")
+        print("\n[INFO] Troubleshooting tips:")
         print("  - Check if PostgreSQL is running")
         print("  - Verify DATABASE_URL is correct")
         print("  - Check network connectivity")
@@ -130,7 +157,7 @@ def main():
     
     # Success!
     print("\n" + "=" * 60)
-    print("✅ Database setup completed successfully!")
+    print("[SUCCESS] Database setup completed successfully!")
     print("=" * 60)
     sys.exit(0)
 

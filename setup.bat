@@ -77,7 +77,7 @@ if not exist "requirements.txt" (
     echo [ERROR] requirements.txt not found!
     exit /b 1
 )
-pip install -r requirements.txt >nul 2>&1
+pip install -r requirements.txt >nul
 if errorlevel 1 (
     echo [ERROR] Failed to install dependencies
     exit /b 1
