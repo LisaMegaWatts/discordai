@@ -59,7 +59,7 @@ class ConversationContextManager:
     async def get_or_create_session(self, user_id: str):
         """
         Get active session for user or create a new one if expired/missing.
-        Each async task/coroutine creates its own AsyncSession.
+        Uses a single session per request/task.
         """
         active_session = await get_active_session_for_user(user_id)
         if active_session:
