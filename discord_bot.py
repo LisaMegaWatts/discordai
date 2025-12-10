@@ -1,3 +1,14 @@
+import asyncio
+# Utility to check if event loop is running and not closed
+def is_event_loop_running():
+    try:
+        loop = asyncio.get_running_loop()
+        return not loop.is_closed()
+    except RuntimeError:
+        return False
+from dotenv import load_dotenv
+load_dotenv()
+
 import discord
 from discord.ext import commands
 import os
@@ -10,7 +21,6 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import datetime
 import asyncio
 import sys
-from dotenv import load_dotenv
 
 # Import new conversational services
 from services.intent_service import IntentDetectionService
@@ -24,8 +34,9 @@ from crud import create_intent_log
 load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://user:password@localhost:5432/ai_ide_db")
-engine = create_async_engine(DATABASE_URL, echo=True)
-AsyncSessionLocal = sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+from db import AsyncSessionLocal, engine
+
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://user:password@localhost:5432/ai_ide_db")
 
 async def init_db():
     async with engine.begin() as conn:
@@ -51,6 +62,10 @@ intents.dm_messages = True
 
 bot = commands.Bot(command_prefix="/", intents=intents)
 scheduler = AsyncIOScheduler()
+
+# Track background tasks for explicit shutdown
+background_tasks = set()
+shutdown_event = asyncio.Event()
 
 # Initialize conversational services
 intent_service = IntentDetectionService(anthropic_client)
@@ -84,8 +99,12 @@ async def setup_hook():
     """Called when the bot is starting up and the event loop is ready."""
     await setup_scheduler()
     
-    # Start cache cleanup background task
-    asyncio.create_task(cache_cleanup_task())
+    # Start cache cleanup background task and track it
+    task = asyncio.create_task(cache_cleanup_task())
+    background_tasks.add(task)
+    def _task_done_callback(t):
+        background_tasks.discard(t)
+    task.add_done_callback(_task_done_callback)
     
     # Cache warming removed - cache will populate naturally during use
     # This prevents startup errors with unhashable dict types
@@ -132,13 +151,19 @@ async def on_message(message):
     
     # Process all non-command messages through conversational pipeline
     try:
-        async with message.channel.typing():
-            response_text = await process_conversational_message(message)
-            if response_text:
-                await message.channel.send(response_text)
+        if message.channel is not None and is_event_loop_running():
+            async with message.channel.typing():
+                response_text = await process_conversational_message(message)
+                if response_text and is_event_loop_running():
+                    await message.channel.send(response_text)
+        else:
+            print("Error: message.channel is None or event loop is closed. Cannot send response.")
     except Exception as e:
         print(f"Error processing conversational message: {e}")
-        await message.channel.send("I encountered an error processing your message. Please try again or use a slash command.")
+        if message.channel is not None and is_event_loop_running():
+            await message.channel.send("I encountered an error processing your message. Please try again or use a slash command.")
+        else:
+            print("Error: message.channel is None or event loop is closed. Cannot send error message.")
 
 async def process_conversational_message(message: discord.Message) -> str:
     """Process message through semantic intent detection pipeline with caching and optimizations."""
@@ -155,84 +180,84 @@ async def process_conversational_message(message: discord.Message) -> str:
             print(f"Cache hit for message: {message_text[:50]}...")
             return cached_response
         
-        async with AsyncSessionLocal() as db_session:
-            # Initialize services with database session
-            conversation_manager = ConversationContextManager(db_session)
-            response_service = ResponseGenerationService(anthropic_client, db_session)
-            
-            # Parallel operations: Get session and detect intent concurrently
-            session_task = conversation_manager.get_or_create_session(user_id)
-            intent_task = intent_service.detect_intent(message_text)
-            
-            session, intent_result = await asyncio.gather(session_task, intent_task)
-            
-            intent = intent_result['intent']
-            
-            # Check if we can use a quick template response
-            if PerformanceUtils.should_use_quick_response(intent, len(message_text)):
-                quick_response = PerformanceUtils.get_quick_response_template(intent)
-                if quick_response:
-                    # Cache the quick response
-                    await response_cache.set(message_text, quick_response, intent)
-                    
-                    # Still log intent and store messages for analytics
-                    await create_intent_log(
-                        db_session,
-                        user_id,
-                        message_text,
-                        intent,
-                        intent_result.get('confidence', 0.0),
-                        intent_result.get('entities', {})
-                    )
-                    
-                    await conversation_manager.add_message(session.id, user_id, message_text, "user", intent, intent_result.get('confidence', 0.0))
-                    await conversation_manager.add_message(session.id, user_id, quick_response, "assistant")
-                    
-                    return quick_response
-            
-            # Log intent detection
-            await create_intent_log(
-                db_session,
-                user_id,
-                message_text,
-                intent,
-                intent_result.get('confidence', 0.0),
-                intent_result.get('entities', {})
-            )
-            
-            # Get conversation context with limited window (last 10 messages)
-            context = await conversation_manager.get_context(session.id, limit=10)
-            
-            # Handle intent-specific actions
-            action_result = None
-            entities = intent_result.get('entities', {})
-            
-            if intent in ['generate_image', 'submit_feature']:
-                action_result = await handle_intent_action(intent, entities, message)
-            
-            # Generate response based on intent and context
-            response_text = await response_service.generate_response(
-                user_message=message_text,
-                intent=intent,
-                entities=intent_result.get('entities', {}),
-                conversation_context=context,
-                user_id=user_id
-            )
-            
-            # Store messages in conversation history (parallel)
-            store_user_msg = conversation_manager.add_message(session.id, user_id, message_text, "user", intent, intent_result.get('confidence', 0.0))
-            store_assistant_msg = conversation_manager.add_message(session.id, user_id, response_text, "assistant")
-            
-            await asyncio.gather(store_user_msg, store_assistant_msg)
-            
-            # Cache response if intent is cacheable
-            if response_cache.is_cacheable_intent(intent):
-                await response_cache.set(message_text, response_text, intent)
-            
-            return response_text
+        # Initialize services without passing session to CRUD
+        conversation_manager = ConversationContextManager(AsyncSessionLocal)
+        response_service = ResponseGenerationService(anthropic_client, None)
+        
+        # Parallel operations: Get session and detect intent concurrently
+        session_task = conversation_manager.get_or_create_session(user_id)
+        intent_task = intent_service.detect_intent(message_text)
+        
+        session, intent_result = await asyncio.gather(session_task, intent_task)
+
+        if session is None:
+            print(f"Error: Session object is None after get_or_create_session for user {user_id}.")
+            return "Session error: Unable to create or retrieve a valid session. Please try again later."
+
+        intent = intent_result['intent']
+
+        # Check if we can use a quick template response
+        if PerformanceUtils.should_use_quick_response(intent, len(message_text)):
+            quick_response = PerformanceUtils.get_quick_response_template(intent)
+            if quick_response:
+                # Cache the quick response
+                await response_cache.set(message_text, quick_response, intent)
+
+                # Still log intent and store messages for analytics
+                await create_intent_log(
+                    user_id,
+                    message_text,
+                    intent,
+                    intent_result.get('confidence', 0.0),
+                    intent_result.get('entities', {})
+                )
+
+                await conversation_manager.add_message(session.id, user_id, message_text, "user", intent, intent_result.get('confidence', 0.0))
+                await conversation_manager.add_message(session.id, user_id, quick_response, "assistant")
+
+                return quick_response
+        
+        # Log intent detection
+        await create_intent_log(
+            user_id,
+            message_text,
+            intent,
+            intent_result.get('confidence', 0.0),
+            intent_result.get('entities', {})
+        )
+        
+        # Get conversation context with limited window (last 10 messages)
+        context = await conversation_manager.get_conversation_context(session.id, max_messages=10)
+        
+        # Handle intent-specific actions
+        action_result = None
+        entities = intent_result.get('entities', {})
+        
+        if intent in ['generate_image', 'submit_feature']:
+            action_result = await handle_intent_action(intent, entities, message)
+        
+        # Generate response based on intent and context
+        response_text = await response_service.generate_response(
+            user_message=message_text,
+            intent=intent,
+            entities=intent_result.get('entities', {}),
+            conversation_context=context,
+            user_id=user_id
+        )
+        
+        # Store messages in conversation history (parallel)
+        store_user_msg = conversation_manager.add_message(session.id, user_id, message_text, "user", intent, intent_result.get('confidence', 0.0))
+        store_assistant_msg = conversation_manager.add_message(session.id, user_id, response_text, "assistant")
+        
+        await asyncio.gather(store_user_msg, store_assistant_msg)
+        
+        # Cache response if intent is cacheable
+        if response_cache.is_cacheable_intent(intent):
+            await response_cache.set(message_text, response_text, intent)
+        
+        return response_text
             
     except Exception as e:
-        print(f"Error in process_conversational_message: {e}")
         raise
 
 async def handle_intent_action(intent: str, entities: dict, message: discord.Message) -> str:
@@ -319,6 +344,8 @@ async def generate_image_from_prompt(prompt: str, user_id: str, message: discord
                     async with AsyncSessionLocal() as db_session:
                         from crud import create_generated_image
                         db_image = await create_generated_image(db_session, user_id, filepath, prompt)
+                        if db_image is None:
+                            print(f"Error: Failed to store generated image metadata in DB for user {user_id}, prompt '{prompt}'.")
                     # Send image to channel
                     await message.channel.send(file=discord.File(filepath))
                     return f"I've generated an image for: '{prompt}'"
@@ -336,12 +363,14 @@ async def submit_feature_from_text(title: str, description: str, user_id: str, m
         from crud import create_feature_request
         async with AsyncSessionLocal() as session:
             fr = await create_feature_request(session, user_id, title, description)
+            if fr is None:
+                print(f"Error: Failed to create feature request for user {user_id}, title '{title}'.")
         
-        # Create GitHub PR
-        from github_integration import create_feature_branch_and_pr
-        pr_url = create_feature_branch_and_pr(title, description, discord_link)
+            # Create GitHub PR
+            from github_integration import create_feature_branch_and_pr
+            pr_url = create_feature_branch_and_pr(title, description, discord_link)
         
-        return f"I've submitted your feature request: '{title}'. GitHub PR: {pr_url}"
+            return f"I've submitted your feature request: '{title}'. GitHub PR: {pr_url}"
         
     except Exception as e:
         return f"Failed to submit feature request: {str(e)}"
@@ -369,14 +398,18 @@ async def daily_reflection_task():
     # Log to PostgreSQL (ReflectionLog, user_id='system')
     from crud import create_reflection_log
     async with AsyncSessionLocal() as session:
-        await create_reflection_log(session, "system", summary)
+        result = await create_reflection_log(session, "system", summary)
+        if result is None:
+            print("Error: Failed to create reflection log in DB for daily reflection.")
 
     # Post to Discord channel (stub: channel_id from env)
     channel_id = int(os.getenv("REFLECTION_CHANNEL_ID", "0"))
     if channel_id:
         channel = bot.get_channel(channel_id)
-        if channel:
+        if channel is not None:
             await channel.send(summary)
+        else:
+            print(f"Error: Could not find channel with id {channel_id}. Cannot send summary.")
 
 @bot.command(name="request-feature")
 async def request_feature(ctx):
@@ -388,19 +421,37 @@ async def request_feature(ctx):
     from github_integration import create_feature_branch_and_pr
 
     pr_url = create_feature_branch_and_pr(feature_title, feature_description, discord_link)
-    await ctx.send(f"Feature request received. PR created: {pr_url}")
+    try:
+        if hasattr(ctx, 'channel') and ctx.channel is not None and is_event_loop_running():
+            await ctx.send(f"Feature request received. PR created: {pr_url}")
+        else:
+            print("Error: ctx.channel is None or event loop is closed. Cannot send feature request response.")
+    except (AttributeError, RuntimeError) as e:
+        print(f"Error sending feature request response: {e}")
 
 @bot.command(name="generate-image")
 async def generate_image(ctx, *, prompt: str = None):
     if not prompt:
-        await ctx.send("Please provide a prompt. Usage: `/generate-image <prompt>`")
+        try:
+            if hasattr(ctx, 'channel') and ctx.channel is not None and is_event_loop_running():
+                await ctx.send("Please provide a prompt. Usage: `/generate-image <prompt>`")
+            else:
+                print("Error: ctx.channel is None or event loop is closed. Cannot send prompt error.")
+        except (AttributeError, RuntimeError) as e:
+            print(f"Error sending prompt error: {e}")
         return
 
     await ctx.send(f"Generating image for prompt: `{prompt}` ...")
     
     if not OPENROUTER_API_KEY:
-        await ctx.send("Error: OpenRouter API key not configured. Please contact the administrator.")
-        return
+            try:
+                if hasattr(ctx, 'channel') and ctx.channel is not None and is_event_loop_running():
+                    await ctx.send("Error: OpenRouter API key not configured. Please contact the administrator.")
+                else:
+                    print("Error: ctx.channel is None or event loop is closed. Cannot send API key error.")
+            except (AttributeError, RuntimeError) as e:
+                print(f"Error sending API key error: {e}")
+            return
     
     try:
         # Call OpenRouter API for image generation
@@ -461,6 +512,8 @@ async def generate_image(ctx, *, prompt: str = None):
                         from crud import create_generated_image
                         user_id = str(ctx.author.id)
                         db_image = await create_generated_image(db_session, user_id, filepath, prompt)
+                        if db_image is None:
+                            print(f"Error: Failed to store generated image metadata in DB for user {user_id}, prompt '{prompt}'.")
                     await ctx.send(f"Image generated and saved: {filepath}")
                     await ctx.send(file=discord.File(filepath))
                 else:
@@ -477,12 +530,16 @@ async def get_image(ctx, image_id: int = None):
         if image_id:
             img = await get_generated_image(db_session, image_id)
             if not img or img.user_id != user_id:
-                await ctx.send("Image not found or access denied.")
+                try:
+                    if hasattr(ctx, 'channel') and ctx.channel is not None and is_event_loop_running():
+                        await ctx.send("Image not found or access denied.")
+                    else:
+                        print("Error: ctx.channel is None or event loop is closed. Cannot send image not found.")
+                except (AttributeError, RuntimeError) as e:
+                    print(f"Error sending image not found: {e}")
                 return
         else:
-            # Get latest image for user
-            from sqlalchemy.future import select
-            from models import GeneratedImage
+            from sqlalchemy import select
             result = await db_session.execute(
                 select(GeneratedImage)
                 .where(GeneratedImage.user_id == user_id)
@@ -502,7 +559,13 @@ async def get_image(ctx, image_id: int = None):
 
 @bot.command(name="status")
 async def status(ctx):
-    await ctx.send("Bot is running and ready. (MVP stub)")
+    try:
+        if hasattr(ctx, 'channel') and ctx.channel is not None and is_event_loop_running():
+            await ctx.send("Bot is running and ready. (MVP stub)")
+        else:
+            print("Error: ctx.channel is None or event loop is closed. Cannot send status.")
+    except (AttributeError, RuntimeError) as e:
+        print(f"Error sending status: {e}")
 
 @bot.command(name="submit-feature")
 async def submit_feature(ctx, *, arg: str = None):
@@ -510,8 +573,14 @@ async def submit_feature(ctx, *, arg: str = None):
     Usage: /submit-feature <title> | <description>
     """
     if not arg or "|" not in arg:
-        await ctx.send("Usage: `/submit-feature <title> | <description>`")
-        return
+            try:
+                if hasattr(ctx, 'channel') and ctx.channel is not None and is_event_loop_running():
+                    await ctx.send("Usage: `/submit-feature <title> | <description>`")
+                else:
+                    print("Error: ctx.channel is None or event loop is closed. Cannot send submit-feature usage.")
+            except (AttributeError, RuntimeError) as e:
+                print(f"Error sending submit-feature usage: {e}")
+            return
     title, description = [x.strip() for x in arg.split("|", 1)]
     discord_link = ctx.message.jump_url
     user_id = str(ctx.author.id)
@@ -520,13 +589,21 @@ async def submit_feature(ctx, *, arg: str = None):
     from crud import create_feature_request
     async with AsyncSessionLocal() as session:
         fr = await create_feature_request(session, user_id, title, description)
+        if fr is None:
+            print(f"Error: Failed to create feature request for user {user_id}, title '{title}'.")
 
     # Create GitHub PR
     from github_integration import create_feature_branch_and_pr
     pr_url = create_feature_branch_and_pr(title, description, discord_link)
 
     # Notify Discord channel
-    await ctx.send(f"Feature request submitted and stored. PR created: {pr_url}")
+    try:
+        if hasattr(ctx, 'channel') and ctx.channel is not None and is_event_loop_running():
+            await ctx.send(f"Feature request submitted and stored. PR created: {pr_url}")
+        else:
+            print("Error: ctx.channel is None or event loop is closed. Cannot send feature request submitted.")
+    except (AttributeError, RuntimeError) as e:
+        print(f"Error sending feature request submitted: {e}")
 
 if __name__ == "__main__":
     if not DISCORD_TOKEN:
@@ -542,5 +619,63 @@ if __name__ == "__main__":
             print(f"Error initializing database: {e}")
             print("Bot startup aborted due to database initialization failure.")
             sys.exit(1)
-        
+
+        # Patch bot.close to ensure background tasks are cancelled and DB engine disposed
+        orig_close = bot.close
+        async def safe_close():
+            print("[SHUTDOWN] Initiating shutdown sequence...")
+            shutdown_event.set()
+            # Cancel all background tasks
+            print(f"[SHUTDOWN] Cancelling {len(background_tasks)} background tasks...")
+            for task in list(background_tasks):
+                if not task.done():
+                    print(f"[SHUTDOWN] Cancelling background task: {task}")
+                    task.cancel()
+            await asyncio.gather(*background_tasks, return_exceptions=True)
+            print("[SHUTDOWN] All background tasks cancelled and awaited.")
+
+            # Log pending asyncio tasks/coroutines before engine disposal
+            pending_tasks = [t for t in asyncio.all_tasks() if not t.done()]
+            print(f"[SHUTDOWN] Pending asyncio tasks before engine disposal: {len(pending_tasks)}")
+            for t in pending_tasks:
+                print(f"[SHUTDOWN] Pending task: {t}")
+
+            # Wait for all DB-related tasks to finish before disposing engine
+            db_tasks = [t for t in pending_tasks if hasattr(t, "_coro") and "sqlalchemy" in str(t._coro)]
+            if db_tasks:
+                print(f"[SHUTDOWN] Awaiting {len(db_tasks)} unfinished DB tasks before engine disposal...")
+                await asyncio.gather(*db_tasks, return_exceptions=True)
+                print("[SHUTDOWN] All DB tasks awaited.")
+
+            # Dispose SQLAlchemy engine before closing event loop
+            try:
+                print("[SHUTDOWN] Disposing SQLAlchemy engine before shutdown...")
+                await engine.dispose()
+                print("[SHUTDOWN] Engine disposed successfully.")
+            except Exception as e:
+                print(f"[SHUTDOWN] Error disposing engine: {e}")
+
+            # Explicitly clear lingering references to sessions/engine
+            import gc, weakref
+            gc.collect()
+            print("[SHUTDOWN] Garbage collected. Checking for lingering AsyncSession/engine references...")
+            for obj in gc.get_objects():
+                if type(obj).__name__ == "AsyncSession":
+                    print(f"[WARNING] Lingering AsyncSession detected after shutdown: {obj}")
+                if type(obj).__name__ == "AsyncEngine":
+                    print(f"[WARNING] Lingering AsyncEngine detected after shutdown: {obj}")
+
+            print("[SHUTDOWN] Shutdown sequence complete. Closing bot...")
+            await orig_close()
+        bot.close = safe_close
+
+        # Handle SIGTERM for graceful shutdown
+        import signal
+        def handle_sigterm(*_):
+            print("SIGTERM received: shutting down Discord bot gracefully...")
+            loop = asyncio.get_event_loop()
+            if not loop.is_closed():
+                loop.create_task(bot.close())
+        signal.signal(signal.SIGTERM, handle_sigterm)
+
         bot.run(DISCORD_TOKEN)
