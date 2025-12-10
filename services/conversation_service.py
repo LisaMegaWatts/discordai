@@ -99,16 +99,31 @@ class ConversationContextManager:
             except Exception as e:
                 logger.error(f"Error ending expired session {active_session.id} for user {user_id}: {e}", exc_info=True)
                 raise
-        try:
-            new_session = await create_conversation_session(user_id)
-            logger.info(f"Created new session {new_session.id} for user {user_id}")
-            # Store new session in Redis
-            if self.redis_client:
-                await self.redis_client.set(redis_key, new_session.id, expire_seconds=self.session_timeout_minutes*60)
-            return new_session
-        except Exception as e:
-            logger.error(f"Error creating new session for user {user_id}: {e}", exc_info=True)
-            raise
+        # DB fallback: atomic session creation with retry to avoid duplicates
+        from sqlalchemy.exc import IntegrityError
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                new_session = await create_conversation_session(user_id)
+                logger.info(f"Created new session {new_session.id} for user {user_id}")
+                # Store new session in Redis
+                if self.redis_client:
+                    await self.redis_client.set(redis_key, new_session.id, expire_seconds=self.session_timeout_minutes*60)
+                return new_session
+            except IntegrityError:
+                logger.warning(f"Session race detected for user {user_id}, retrying ({attempt+1}/{max_attempts})")
+                # Another process likely created the session, fetch it
+                active_session = await get_active_session_for_user(user_id)
+                if active_session:
+                    logger.info(f"Fetched concurrent active session {active_session.id} for user {user_id}")
+                    if self.redis_client:
+                        await self.redis_client.set(redis_key, active_session.id, expire_seconds=self.session_timeout_minutes*60)
+                    return active_session
+            except Exception as e:
+                logger.error(f"Error creating new session for user {user_id}: {e}", exc_info=True)
+                if attempt == max_attempts - 1:
+                    raise
+        raise RuntimeError("Failed to create or fetch session atomically")
     
     async def add_message(
         self,
@@ -148,7 +163,15 @@ class ConversationContextManager:
             if self.redis_client:
                 await self.redis_client.delete(redis_key)
             return
+        # DB fallback: ensure atomic message creation only if session is still active
+        from sqlalchemy.exc import IntegrityError
         try:
+            session_obj = await get_conversation_session(session_id)
+            if not session_obj or getattr(session_obj, "status", None) != "active":
+                logger.warning(
+                    f"Session {session_id} became inactive before message add (user {user_id}). Skipping operation."
+                )
+                return
             await create_conversation_message(
                 session_id=session_id,
                 user_id=user_id,
@@ -157,6 +180,9 @@ class ConversationContextManager:
                 intent=intent,
                 confidence=confidence
             )
+        except IntegrityError:
+            logger.error(f"Duplicate message detected for session {session_id}, user {user_id}. Skipping.")
+            return
         except Exception as e:
             logger.error(f"Error creating conversation message for session {session_id}, user {user_id}: {e}", exc_info=True)
             return

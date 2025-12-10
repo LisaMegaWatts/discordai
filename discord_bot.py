@@ -680,7 +680,52 @@ async def submit_feature(ctx, *, arg: str = None):
             async with _reply_in_progress_lock:
                 _reply_in_progress_message_ids.discard(msg_id)
 
+import atexit
+
+def create_lock_file_atomic(lock_path):
+    """
+    Atomically create a lock file. If it already exists, another process is running.
+    Returns True if lock acquired, False otherwise.
+    """
+    import os
+    import errno
+    try:
+        # O_EXCL + O_CREAT ensures atomic creation
+        fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        with os.fdopen(fd, "w") as f:
+            f.write(str(os.getpid()))
+        return True
+    except OSError as e:
+        if e.errno == errno.EEXIST:
+            return False
+        raise
+
+def remove_lock_file(lock_path):
+    import os
+    try:
+        if os.path.exists(lock_path):
+            os.remove(lock_path)
+    except Exception as e:
+        print(f"Error removing lock file: {e}")
+
+LOCK_FILE_PATH = "discord_bot.lock"
+
+def enforce_single_process():
+    if not create_lock_file_atomic(LOCK_FILE_PATH):
+        print("[ERROR] Another discord_bot.py process is already running (lock file exists).")
+        sys.exit(1)
+    # Register cleanup for normal exit
+    atexit.register(remove_lock_file, LOCK_FILE_PATH)
+    # Register cleanup for SIGINT/SIGTERM
+    import signal
+    def _cleanup_handler(*_):
+        remove_lock_file(LOCK_FILE_PATH)
+        sys.exit(0)
+    signal.signal(signal.SIGINT, _cleanup_handler)
+    signal.signal(signal.SIGTERM, _cleanup_handler)
+
 if __name__ == "__main__":
+    enforce_single_process()
     if not DISCORD_TOKEN:
         print("Error: DISCORD_TOKEN not set in environment.")
     else:
@@ -711,13 +756,13 @@ if __name__ == "__main__":
                 print("[DIAG] Background tasks cancelled and awaited successfully.")
             except Exception as e:
                 print(f"[DIAG] Exception during background task cancellation: {e}")
-        
+            
             # Log pending asyncio tasks/coroutines before engine disposal
             pending_tasks = [t for t in asyncio.all_tasks() if not t.done()]
             print(f"[SHUTDOWN] Pending asyncio tasks before engine disposal: {len(pending_tasks)}")
             for t in pending_tasks:
                 print(f"[SHUTDOWN] Pending task: {t}")
-        
+            
             # Explicitly close/await all AsyncSession objects before engine disposal
             import gc
             session_objs = []
@@ -740,7 +785,7 @@ if __name__ == "__main__":
                     except Exception as e:
                         print(f"[DIAG] Exception during AsyncSession close: {e}")
                 print("[SHUTDOWN] All AsyncSession objects closed and awaited.")
-        
+            
             # Wait for all DB-related tasks to finish before disposing engine
             db_tasks = [t for t in pending_tasks if hasattr(t, "_coro") and "sqlalchemy" in str(t._coro)]
             if db_tasks:
@@ -751,7 +796,7 @@ if __name__ == "__main__":
                 except Exception as e:
                     print(f"[DIAG] Exception during DB task await: {e}")
                 print("[SHUTDOWN] All DB tasks awaited.")
-        
+            
             # Dispose SQLAlchemy engine before closing event loop
             try:
                 print("[SHUTDOWN] Disposing SQLAlchemy engine before shutdown...")
@@ -759,7 +804,7 @@ if __name__ == "__main__":
                 print("[SHUTDOWN] Engine disposed successfully.")
             except Exception as e:
                 print(f"[SHUTDOWN] Error disposing engine: {e}")
-        
+            
             # Explicitly delete references and run garbage collection
             try:
                 print("[SHUTDOWN] Deleting references to AsyncSession/engine...")
@@ -769,7 +814,7 @@ if __name__ == "__main__":
                 del engine
             except Exception as e:
                 print(f"[SHUTDOWN] Error deleting references: {e}")
-        
+            
             gc.collect()
             print("[SHUTDOWN] Garbage collected. Checking for lingering AsyncSession/engine references...")
             lingering_sessions = 0
@@ -782,7 +827,7 @@ if __name__ == "__main__":
                     print(f"[WARNING] Lingering AsyncEngine detected after shutdown: {obj}")
                     lingering_engines += 1
             print(f"[SHUTDOWN] Lingering AsyncSession objects: {lingering_sessions}, AsyncEngine objects: {lingering_engines}")
-        
+            
             print("[SHUTDOWN] Shutdown sequence complete. Closing bot...")
             try:
                 await orig_close()
@@ -800,4 +845,8 @@ if __name__ == "__main__":
                 loop.create_task(bot.close())
         signal.signal(signal.SIGTERM, handle_sigterm)
 
-        bot.run(DISCORD_TOKEN)
+        try:
+            bot.run(DISCORD_TOKEN)
+        finally:
+            # Remove lock file on shutdown
+            remove_lock_file(LOCK_FILE_PATH)
