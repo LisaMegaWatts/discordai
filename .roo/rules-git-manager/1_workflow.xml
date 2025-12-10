@@ -1,0 +1,57 @@
+<workflow_instructions>
+  <mode_overview>
+    The Git Manager mode automates all aspects of GitHub repository management, including commit message generation, PR review and merging, semantic versioning, tag and release management, issue and project organization, and GitHub Actions creation.
+  </mode_overview>
+  <initialization_steps>
+    <step number="1">
+      <action>Detect repository changes and events</action>
+      <details>
+        Monitor for new commits, pull requests, issues, project updates, and workflow changes.
+      </details>
+    </step>
+    <step number="2">
+      <action>Gather context for each event</action>
+      <tools>
+        <tool>read_file</tool>
+        <tool>search_files</tool>
+        <tool>list_files</tool>
+        <tool>mcp (GitHub API)</tool>
+      </tools>
+    </step>
+  </initialization_steps>
+  <main_workflow>
+    <phase name="commit_management">
+      <description>Automate commit message writing and tagging</description>
+      <steps>
+        <step>Analyze code changes and generate descriptive commit messages</step>
+        <step>Apply semantic versioning and update tags/releases as needed</step>
+      </steps>
+    </phase>
+    <phase name="pull_request_management">
+      <description>Automate PR review, merging, and branch cleanup</description>
+      <steps>
+        <step>Review PRs for code quality and merge automatically if criteria are met</step>
+        <step>Delete merged branches and update release notes</step>
+      </steps>
+    </phase>
+    <phase name="issue_and_project_management">
+      <description>Organize and prioritize issues, bugs, features, and projects</description>
+      <steps>
+        <step>Label and prioritize issues automatically</step>
+        <step>Create and update GitHub Projects for collaborative workflows</step>
+      </steps>
+    </phase>
+    <phase name="workflow_automation">
+      <description>Create and maintain GitHub Actions for CI/CD and automation</description>
+      <steps>
+        <step>Generate or update workflow YAML files based on repository needs</step>
+        <step>Monitor workflow runs and update actions as requirements change</step>
+      </steps>
+    </phase>
+  </main_workflow>
+  <completion_criteria>
+    <criterion>All repository management tasks are automated and up-to-date</criterion>
+    <criterion>Commits, PRs, issues, projects, and actions are handled without manual intervention</criterion>
+    <criterion>Repository follows best practices for collaboration and automation</criterion>
+  </completion_criteria>
+</workflow_instructions>

@@ -1,0 +1,54 @@
+<tool_usage_guide>
+  <tool_priorities>
+    <priority level="1">
+      <tool>mcp (GitHub API)</tool>
+      <when>For all repository, PR, issue, project, and workflow management</when>
+      <why>Direct integration enables automation of all GitHub tasks</why>
+    </priority>
+    <priority level="2">
+      <tool>read_file, search_files, list_files</tool>
+      <when>To analyze code changes, workflows, and configuration files</when>
+      <why>Provides context for commit messages, PR reviews, and workflow updates</why>
+    </priority>
+    <priority level="3">
+      <tool>command</tool>
+      <when>For local git operations, versioning, and validation</when>
+      <why>Ensures local state matches remote automation</why>
+    </priority>
+  </tool_priorities>
+  <tool_specific_guidance>
+    <tool name="mcp">
+      <best_practices>
+        <practice>Use GitHub API endpoints for all automation tasks</practice>
+        <practice>Always check for API rate limits and handle errors gracefully</practice>
+        <practice>Log all automated actions with references to affected entities</practice>
+      </best_practices>
+      <example><![CDATA[
+<use_mcp_tool>
+<server_name>github</server_name>
+<tool_name>create_pull_request</tool_name>
+<arguments>
+{
+  "owner": "example-org",
+  "repo": "example-repo",
+  "title": "Automated PR",
+  "head": "feature-branch",
+  "base": "main"
+}
+</arguments>
+</use_mcp_tool>
+      ]]></example>
+    </tool>
+    <tool name="command">
+      <best_practices>
+        <practice>Use for git status, tag, and version checks before automating remotely</practice>
+        <practice>Validate local changes before pushing or tagging</practice>
+      </best_practices>
+      <example><![CDATA[
+<execute_command>
+<command>git status</command>
+</execute_command>
+      ]]></example>
+    </tool>
+  </tool_specific_guidance>
+</tool_usage_guide>

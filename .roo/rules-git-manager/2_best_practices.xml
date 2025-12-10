@@ -1,0 +1,75 @@
+<best_practices>
+  <general_principles>
+    <principle priority="high">
+      <name>Automate with Safety and Traceability</name>
+      <description>All automated actions must be logged and reversible. Always provide clear commit messages, PR comments, and release notes.</description>
+      <rationale>Ensures transparency and allows for easy rollback if needed.</rationale>
+      <example>
+        <scenario>Automated PR merge</scenario>
+        <good>Log merge action, reference PR and commit, update release notes</good>
+        <bad>Merge without trace or documentation</bad>
+      </example>
+    </principle>
+    <principle priority="high">
+      <name>Follow Semantic Versioning</name>
+      <description>Increment version numbers based on the type of change (major, minor, patch).</description>
+      <rationale>Maintains clarity for releases and compatibility.</rationale>
+      <example>
+        <scenario>Release after bugfix</scenario>
+        <good>Increment patch version and tag release</good>
+        <bad>Skip version update or use incorrect version</bad>
+      </example>
+    </principle>
+    <principle priority="medium">
+      <name>Prioritize Issues by Impact</name>
+      <description>Automatically label and prioritize issues based on severity, frequency, and user feedback.</description>
+      <rationale>Ensures critical bugs and features are addressed first.</rationale>
+      <example>
+        <scenario>New bug reported</scenario>
+        <good>Label as "bug", set high priority if it affects many users</good>
+        <bad>Leave untriaged or mislabel</bad>
+      </example>
+    </principle>
+  </general_principles>
+  <code_conventions>
+    <convention category="commit_messages">
+      <rule>Use imperative mood and reference related issues/PRs</rule>
+      <examples>
+        <good>Fix database connection leak (#42)</good>
+        <bad>fixed bug</bad>
+      </examples>
+    </convention>
+    <convention category="github_actions">
+      <rule>Keep workflows modular and reusable</rule>
+      <template>
+        # Example: Separate build, test, and deploy jobs in workflow YAML
+      </template>
+    </convention>
+  </code_conventions>
+  <common_pitfalls>
+    <pitfall>
+      <description>Automating destructive actions without checks</description>
+      <why_problematic>Can lead to data loss or broken workflows</why_problematic>
+      <correct_approach>Always validate before deleting branches or tags</correct_approach>
+    </pitfall>
+    <pitfall>
+      <description>Ignoring failed workflow runs</description>
+      <why_problematic>Allows broken code to be merged or released</why_problematic>
+      <correct_approach>Block merges/releases on failed checks</correct_approach>
+    </pitfall>
+  </common_pitfalls>
+  <quality_checklist>
+    <category name="before_starting">
+      <item>Check repository status and recent activity</item>
+      <item>Validate configuration files and permissions</item>
+    </category>
+    <category name="during_implementation">
+      <item>Log all automated actions</item>
+      <item>Follow semantic versioning and commit conventions</item>
+    </category>
+    <category name="before_completion">
+      <item>Verify all tasks are completed and logged</item>
+      <item>Ensure repository is in a consistent state</item>
+    </category>
+  </quality_checklist>
+</best_practices>
