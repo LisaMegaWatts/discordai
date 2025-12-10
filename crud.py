@@ -17,64 +17,51 @@ import uuid
 from typing import Optional
 
 # FeatureRequest CRUD
-async def create_feature_request(user_id, title, description):
-    from db import AsyncSessionLocal
-    async with AsyncSessionLocal() as session:
-        fr = FeatureRequest(user_id=user_id, title=title, description=description)
-        session.add(fr)
+async def create_feature_request(session, user_id, title, description):
+    fr = FeatureRequest(user_id=user_id, title=title, description=description)
+    session.add(fr)
+    await session.commit()
+    await session.refresh(fr)
+    return fr
+
+async def get_feature_request(session, fr_id):
+    result = await session.execute(select(FeatureRequest).where(FeatureRequest.id == fr_id))
+    return result.scalar_one_or_none()
+
+async def update_feature_request(session, fr_id, **kwargs):
+    result = await session.execute(select(FeatureRequest).where(FeatureRequest.id == fr_id))
+    fr = result.scalar_one_or_none()
+    if fr:
+        for key, value in kwargs.items():
+            setattr(fr, key, value)
         await session.commit()
         await session.refresh(fr)
-        return fr
+    return fr
 
-async def get_feature_request(fr_id):
-    from db import AsyncSessionLocal
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(select(FeatureRequest).where(FeatureRequest.id == fr_id))
-        return result.scalar_one_or_none()
-
-async def update_feature_request(fr_id, **kwargs):
-    from db import AsyncSessionLocal
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(select(FeatureRequest).where(FeatureRequest.id == fr_id))
-        fr = result.scalar_one_or_none()
-        if fr:
-            for key, value in kwargs.items():
-                setattr(fr, key, value)
-            await session.commit()
-            await session.refresh(fr)
-        return fr
-
-async def delete_feature_request(fr_id):
-    from db import AsyncSessionLocal
-    async with AsyncSessionLocal() as session:
-        fr = await get_feature_request(fr_id)
-        if fr:
-            await session.delete(fr)
-            await session.commit()
-        return fr
+async def delete_feature_request(session, fr_id):
+    fr = await get_feature_request(session, fr_id)
+    if fr:
+        await session.delete(fr)
+        await session.commit()
+    return fr
 
 # GeneratedImage CRUD
-async def create_generated_image(user_id, image_url, prompt):
+async def create_generated_image(session, user_id, image_url, prompt):
     """
-    Creates a GeneratedImage in its own async session context.
-    Each coroutine/task gets its own session.
+    Creates a GeneratedImage using the provided session.
     """
-    from db import AsyncSessionLocal
-    async with AsyncSessionLocal() as session:
-        gi = GeneratedImage(user_id=user_id, image_url=image_url, prompt=prompt)
-        session.add(gi)
-        await session.commit()
-        await session.refresh(gi)
-        return gi
+    gi = GeneratedImage(user_id=user_id, image_url=image_url, prompt=prompt)
+    session.add(gi)
+    await session.commit()
+    await session.refresh(gi)
+    return gi
 
-async def get_generated_image(gi_id):
+async def get_generated_image(session, gi_id):
     """
-    Retrieves a GeneratedImage in its own async session context.
+    Retrieves a GeneratedImage using the provided session.
     """
-    from db import AsyncSessionLocal
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(select(GeneratedImage).where(GeneratedImage.id == gi_id))
-        return result.scalar_one_or_none()
+    result = await session.execute(select(GeneratedImage).where(GeneratedImage.id == gi_id))
+    return result.scalar_one_or_none()
 
 async def update_generated_image(gi_id, **kwargs):
     """
