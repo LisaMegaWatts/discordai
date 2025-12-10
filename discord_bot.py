@@ -67,9 +67,9 @@ scheduler = AsyncIOScheduler()
 background_tasks = set()
 shutdown_event = asyncio.Event()
 
-# Track messages being replied to (prevents duplicate replies)
-_reply_in_progress_message_ids = set()
-_reply_in_progress_lock = asyncio.Lock()
+# Centralized deduplication using Redis
+from services.redis_utils import RedisClient
+redis_client = RedisClient()
 
 # Initialize conversational services
 intent_service = IntentDetectionService(anthropic_client)
@@ -79,6 +79,9 @@ response_cache = ResponseCache(ttl_seconds=300, max_size=1000)
 async def cache_cleanup_task():
     """Periodically clear expired cache entries."""
     while True:
+        if not is_event_loop_running():
+            print("[DIAG] Event loop closed detected in cache_cleanup_task. Exiting task.")
+            break
         await asyncio.sleep(300)  # Run every 5 minutes
         await response_cache.clear_expired()
         stats = response_cache.get_stats()
@@ -120,20 +123,20 @@ async def on_ready():
     
     # Validate OpenRouter API Key and Image Model
     if OPENROUTER_API_KEY:
-        print(f"✓ OpenRouter API Key: Configured")
-        print(f"✓ OpenRouter Image Model: {OPENROUTER_IMAGE_MODEL}")
+        print("[LOG] OpenRouter API Key: Configured")
+        print("[LOG] OpenRouter Image Model: " + str(OPENROUTER_IMAGE_MODEL))
     else:
-        print("⚠ WARNING: OPENROUTER_API_KEY not set - Image generation will not work")
+        print("[WARN] OPENROUTER_API_KEY not set - Image generation will not work")
         print("  Please set OPENROUTER_API_KEY in your environment variables")
     
     # Validate Anthropic API Key and Model
     if ANTHROPIC_API_KEY:
-        print(f"✓ Anthropic API Key: Configured")
-        print(f"✓ Anthropic Model: {ANTHROPIC_MODEL}")
+        print("[LOG] Anthropic API Key: Configured")
+        print("[LOG] Anthropic Model: " + str(ANTHROPIC_MODEL))
         if anthropic_client:
-            print(f"✓ Anthropic Client: Initialized successfully")
+            print("[LOG] Anthropic Client: Initialized successfully")
     else:
-        print("⚠ WARNING: ANTHROPIC_API_KEY not set - Bot/coding AI features will be limited")
+        print("[WARN] ANTHROPIC_API_KEY not set - Bot/coding AI features will be limited")
         print("  Please set ANTHROPIC_API_KEY in your environment variables")
     
     print("================================\n")
@@ -156,16 +159,16 @@ async def on_message(message):
         return
 
     # Ensure only one reply per message (no parallel/concurrent calls)
-    global _reply_in_progress_message_ids, _reply_in_progress_lock
     msg_id = getattr(message, "id", None)
+    dedup_key = f"dedup:msg:{msg_id}"
     acquired = False
     if msg_id is not None:
-        async with _reply_in_progress_lock:
-            if msg_id in _reply_in_progress_message_ids:
-                print(f"[LOG] Duplicate reply prevented for message id: {msg_id}")
-                return
-            _reply_in_progress_message_ids.add(msg_id)
-            acquired = True
+        # Atomic deduplication with Redis
+        dedup_result = await redis_client.set_if_not_exists(dedup_key, "1", expire_seconds=600)
+        if not dedup_result:
+            print(f"[LOG] Duplicate reply prevented for message id: {msg_id}")
+            return
+        acquired = True
 
     try:
         if message.channel is not None and is_event_loop_running():
@@ -182,10 +185,9 @@ async def on_message(message):
         else:
             print("Error: message.channel is None or event loop is closed. Cannot send error message.")
     finally:
-        # Remove from in-progress set to allow future replies if needed
+        # Remove deduplication key to allow future replies if needed (optional, or let expire)
         if msg_id is not None and acquired:
-            async with _reply_in_progress_lock:
-                _reply_in_progress_message_ids.discard(msg_id)
+            await redis_client.delete(f"dedup:msg:{msg_id}")
 
 async def process_conversational_message(message: discord.Message) -> str:
     """Process message through semantic intent detection pipeline with caching and optimizations."""
@@ -202,8 +204,8 @@ async def process_conversational_message(message: discord.Message) -> str:
             print(f"Cache hit for message: {message_text[:50]}...")
             return cached_response
         
-        # Initialize services without passing session to CRUD
-        conversation_manager = ConversationContextManager(AsyncSessionLocal)
+        # Initialize services with Redis for dedup/session state
+        conversation_manager = ConversationContextManager(AsyncSessionLocal, redis_client=redis_client)
         response_service = ResponseGenerationService(anthropic_client, None)
         
         # Parallel operations: Get session and detect intent concurrently
@@ -609,6 +611,20 @@ async def status(ctx):
     except (AttributeError, RuntimeError) as e:
         print(f"Error sending status: {e}")
 
+@bot.command(name="generate")
+async def generate(ctx, *, prompt: str = None):
+    """Generate content based on a prompt (stub handler)."""
+    if not prompt:
+        await ctx.send("Please provide a prompt. Usage: `/generate <prompt>`")
+        return
+    await ctx.send(f"Generating content for prompt: `{prompt}` ... (feature not implemented)")
+
+@bot.command(name="Get")
+async def get(ctx, *, arg: str = None):
+    """Get information or resource (stub handler)."""
+    print("[DIAG] /Get command handler triggered with arg:", arg)
+    await ctx.send("Get command received. (feature not implemented)")
+
 @bot.command(name="submit-feature")
 async def submit_feature(ctx, *, arg: str = None):
     # Deduplication logic for commands
@@ -690,15 +706,18 @@ if __name__ == "__main__":
                 if not task.done():
                     print(f"[SHUTDOWN] Cancelling background task: {task}")
                     task.cancel()
-            await asyncio.gather(*background_tasks, return_exceptions=True)
-            print("[SHUTDOWN] All background tasks cancelled and awaited.")
-
+            try:
+                await asyncio.gather(*background_tasks, return_exceptions=True)
+                print("[DIAG] Background tasks cancelled and awaited successfully.")
+            except Exception as e:
+                print(f"[DIAG] Exception during background task cancellation: {e}")
+        
             # Log pending asyncio tasks/coroutines before engine disposal
             pending_tasks = [t for t in asyncio.all_tasks() if not t.done()]
             print(f"[SHUTDOWN] Pending asyncio tasks before engine disposal: {len(pending_tasks)}")
             for t in pending_tasks:
                 print(f"[SHUTDOWN] Pending task: {t}")
-
+        
             # Explicitly close/await all AsyncSession objects before engine disposal
             import gc
             session_objs = []
@@ -715,16 +734,24 @@ if __name__ == "__main__":
                     except Exception as e:
                         print(f"[SHUTDOWN] Error closing AsyncSession: {e}")
                 if close_tasks:
-                    await asyncio.gather(*close_tasks, return_exceptions=True)
+                    try:
+                        await asyncio.gather(*close_tasks, return_exceptions=True)
+                        print("[DIAG] AsyncSession objects closed and awaited successfully.")
+                    except Exception as e:
+                        print(f"[DIAG] Exception during AsyncSession close: {e}")
                 print("[SHUTDOWN] All AsyncSession objects closed and awaited.")
-
+        
             # Wait for all DB-related tasks to finish before disposing engine
             db_tasks = [t for t in pending_tasks if hasattr(t, "_coro") and "sqlalchemy" in str(t._coro)]
             if db_tasks:
                 print(f"[SHUTDOWN] Awaiting {len(db_tasks)} unfinished DB tasks before engine disposal...")
-                await asyncio.gather(*db_tasks, return_exceptions=True)
+                try:
+                    await asyncio.gather(*db_tasks, return_exceptions=True)
+                    print("[DIAG] DB tasks awaited successfully.")
+                except Exception as e:
+                    print(f"[DIAG] Exception during DB task await: {e}")
                 print("[SHUTDOWN] All DB tasks awaited.")
-
+        
             # Dispose SQLAlchemy engine before closing event loop
             try:
                 print("[SHUTDOWN] Disposing SQLAlchemy engine before shutdown...")
@@ -732,7 +759,7 @@ if __name__ == "__main__":
                 print("[SHUTDOWN] Engine disposed successfully.")
             except Exception as e:
                 print(f"[SHUTDOWN] Error disposing engine: {e}")
-
+        
             # Explicitly delete references and run garbage collection
             try:
                 print("[SHUTDOWN] Deleting references to AsyncSession/engine...")
@@ -742,7 +769,7 @@ if __name__ == "__main__":
                 del engine
             except Exception as e:
                 print(f"[SHUTDOWN] Error deleting references: {e}")
-
+        
             gc.collect()
             print("[SHUTDOWN] Garbage collected. Checking for lingering AsyncSession/engine references...")
             lingering_sessions = 0
@@ -755,9 +782,13 @@ if __name__ == "__main__":
                     print(f"[WARNING] Lingering AsyncEngine detected after shutdown: {obj}")
                     lingering_engines += 1
             print(f"[SHUTDOWN] Lingering AsyncSession objects: {lingering_sessions}, AsyncEngine objects: {lingering_engines}")
-
+        
             print("[SHUTDOWN] Shutdown sequence complete. Closing bot...")
-            await orig_close()
+            try:
+                await orig_close()
+                print("[DIAG] orig_close() completed without event loop error.")
+            except Exception as e:
+                print(f"[DIAG] Exception during bot close: {e}")
         bot.close = safe_close
 
         # Handle SIGTERM for graceful shutdown
