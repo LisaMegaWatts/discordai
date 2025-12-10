@@ -347,7 +347,10 @@ async def generate_image_from_prompt(prompt: str, user_id: str, message: discord
                         if db_image is None:
                             print(f"Error: Failed to store generated image metadata in DB for user {user_id}, prompt '{prompt}'.")
                     # Send image to channel
-                    await message.channel.send(file=discord.File(filepath))
+                    if message.channel is not None and is_event_loop_running():
+                        await message.channel.send(file=discord.File(filepath))
+                    else:
+                        print("Error: message.channel is None or event loop is closed. Cannot send generated image.")
                     return f"I've generated an image for: '{prompt}'"
                 else:
                     return "Failed to download generated image."
@@ -640,6 +643,25 @@ if __name__ == "__main__":
             for t in pending_tasks:
                 print(f"[SHUTDOWN] Pending task: {t}")
 
+            # Explicitly close/await all AsyncSession objects before engine disposal
+            import gc
+            session_objs = []
+            for obj in gc.get_objects():
+                if type(obj).__name__ == "AsyncSession":
+                    session_objs.append(obj)
+            if session_objs:
+                print(f"[SHUTDOWN] Closing {len(session_objs)} AsyncSession objects before engine disposal...")
+                close_tasks = []
+                for session in session_objs:
+                    try:
+                        print(f"[SHUTDOWN] Closing AsyncSession: {session}")
+                        close_tasks.append(session.close())
+                    except Exception as e:
+                        print(f"[SHUTDOWN] Error closing AsyncSession: {e}")
+                if close_tasks:
+                    await asyncio.gather(*close_tasks, return_exceptions=True)
+                print("[SHUTDOWN] All AsyncSession objects closed and awaited.")
+
             # Wait for all DB-related tasks to finish before disposing engine
             db_tasks = [t for t in pending_tasks if hasattr(t, "_coro") and "sqlalchemy" in str(t._coro)]
             if db_tasks:
@@ -655,15 +677,28 @@ if __name__ == "__main__":
             except Exception as e:
                 print(f"[SHUTDOWN] Error disposing engine: {e}")
 
-            # Explicitly clear lingering references to sessions/engine
-            import gc, weakref
+            # Explicitly delete references and run garbage collection
+            try:
+                print("[SHUTDOWN] Deleting references to AsyncSession/engine...")
+                for session in session_objs:
+                    del session
+                del session_objs
+                del engine
+            except Exception as e:
+                print(f"[SHUTDOWN] Error deleting references: {e}")
+
             gc.collect()
             print("[SHUTDOWN] Garbage collected. Checking for lingering AsyncSession/engine references...")
+            lingering_sessions = 0
+            lingering_engines = 0
             for obj in gc.get_objects():
                 if type(obj).__name__ == "AsyncSession":
                     print(f"[WARNING] Lingering AsyncSession detected after shutdown: {obj}")
+                    lingering_sessions += 1
                 if type(obj).__name__ == "AsyncEngine":
                     print(f"[WARNING] Lingering AsyncEngine detected after shutdown: {obj}")
+                    lingering_engines += 1
+            print(f"[SHUTDOWN] Lingering AsyncSession objects: {lingering_sessions}, AsyncEngine objects: {lingering_engines}")
 
             print("[SHUTDOWN] Shutdown sequence complete. Closing bot...")
             await orig_close()
