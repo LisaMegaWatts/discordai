@@ -67,6 +67,10 @@ scheduler = AsyncIOScheduler()
 background_tasks = set()
 shutdown_event = asyncio.Event()
 
+# Track messages being replied to (prevents duplicate replies)
+_reply_in_progress_message_ids = set()
+_reply_in_progress_lock = asyncio.Lock()
+
 # Initialize conversational services
 intent_service = IntentDetectionService(anthropic_client)
 response_cache = ResponseCache(ttl_seconds=300, max_size=1000)
@@ -137,19 +141,32 @@ async def on_ready():
 @bot.event
 async def on_message(message):
     """Process all messages through semantic intent detection pipeline."""
+    # Logging for event handler registration and triggering
+    print(f"[LOG] on_message event triggered for message id: {getattr(message, 'id', None)} author: {getattr(message.author, 'id', None)}")
     # Ignore bot's own messages
     if message.author == bot.user:
         return
-    
+
     # Process commands first (for backward compatibility)
     await bot.process_commands(message)
-    
+
     # If message was a command, skip conversational processing
     ctx = await bot.get_context(message)
     if ctx.valid:
         return
-    
-    # Process all non-command messages through conversational pipeline
+
+    # Ensure only one reply per message (no parallel/concurrent calls)
+    global _reply_in_progress_message_ids, _reply_in_progress_lock
+    msg_id = getattr(message, "id", None)
+    acquired = False
+    if msg_id is not None:
+        async with _reply_in_progress_lock:
+            if msg_id in _reply_in_progress_message_ids:
+                print(f"[LOG] Duplicate reply prevented for message id: {msg_id}")
+                return
+            _reply_in_progress_message_ids.add(msg_id)
+            acquired = True
+
     try:
         if message.channel is not None and is_event_loop_running():
             async with message.channel.typing():
@@ -164,6 +181,11 @@ async def on_message(message):
             await message.channel.send("I encountered an error processing your message. Please try again or use a slash command.")
         else:
             print("Error: message.channel is None or event loop is closed. Cannot send error message.")
+    finally:
+        # Remove from in-progress set to allow future replies if needed
+        if msg_id is not None and acquired:
+            async with _reply_in_progress_lock:
+                _reply_in_progress_message_ids.discard(msg_id)
 
 async def process_conversational_message(message: discord.Message) -> str:
     """Process message through semantic intent detection pipeline with caching and optimizations."""
@@ -434,95 +456,112 @@ async def request_feature(ctx):
 
 @bot.command(name="generate-image")
 async def generate_image(ctx, *, prompt: str = None):
-    if not prompt:
-        try:
-            if hasattr(ctx, 'channel') and ctx.channel is not None and is_event_loop_running():
-                await ctx.send("Please provide a prompt. Usage: `/generate-image <prompt>`")
-            else:
-                print("Error: ctx.channel is None or event loop is closed. Cannot send prompt error.")
-        except (AttributeError, RuntimeError) as e:
-            print(f"Error sending prompt error: {e}")
-        return
+    # Deduplication logic for commands
+    global _reply_in_progress_message_ids, _reply_in_progress_lock
+    msg_id = getattr(ctx.message, "id", None)
+    acquired = False
+    if msg_id is not None:
+        async with _reply_in_progress_lock:
+            if msg_id in _reply_in_progress_message_ids:
+                print(f"[LOG] Duplicate reply prevented for message id: {msg_id}")
+                return
+            _reply_in_progress_message_ids.add(msg_id)
+            acquired = True
 
-    await ctx.send(f"Generating image for prompt: `{prompt}` ...")
-    
-    if not OPENROUTER_API_KEY:
+    try:
+        if not prompt:
             try:
                 if hasattr(ctx, 'channel') and ctx.channel is not None and is_event_loop_running():
-                    await ctx.send("Error: OpenRouter API key not configured. Please contact the administrator.")
+                    await ctx.send("Please provide a prompt. Usage: `/generate-image <prompt>`")
                 else:
-                    print("Error: ctx.channel is None or event loop is closed. Cannot send API key error.")
+                    print("Error: ctx.channel is None or event loop is closed. Cannot send prompt error.")
             except (AttributeError, RuntimeError) as e:
-                print(f"Error sending API key error: {e}")
-            return
-    
-    try:
-        # Call OpenRouter API for image generation
-        headers = {
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://discord-ai-bot",
-            "X-Title": "Discord AI Bot"
-        }
-        
-        payload = {
-            "model": OPENROUTER_IMAGE_MODEL,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ]
-        }
-        
-        response = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers=headers,
-            json=payload,
-            timeout=60
-        )
-        response.raise_for_status()
-        
-        result = response.json()
-        # Extract image URL from response - format may vary by model
-        # For image generation models, the response typically contains the image URL
-        if 'choices' in result and len(result['choices']) > 0:
-            content = result['choices'][0]['message']['content']
-            # The image URL might be in the content or we need to parse it
-            # For now, assume the model returns a URL or base64 encoded image
-            image_url = content.strip()
-        else:
-            await ctx.send("Error: Unexpected response format from OpenRouter API.")
+                print(f"Error sending prompt error: {e}")
             return
 
-        # Download image
-        import aiohttp
-        import datetime
-        import uuid
+        await ctx.send(f"Generating image for prompt: `{prompt}` ...")
+        
+        if not OPENROUTER_API_KEY:
+                try:
+                    if hasattr(ctx, 'channel') and ctx.channel is not None and is_event_loop_running():
+                        await ctx.send("Error: OpenRouter API key not configured. Please contact the administrator.")
+                    else:
+                        print("Error: ctx.channel is None or event loop is closed. Cannot send API key error.")
+                except (AttributeError, RuntimeError) as e:
+                    print(f"Error sending API key error: {e}")
+                return
+        
+        try:
+            # Call OpenRouter API for image generation
+            headers = {
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://discord-ai-bot",
+                "X-Title": "Discord AI Bot"
+            }
+            
+            payload = {
+                "model": OPENROUTER_IMAGE_MODEL,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ]
+            }
+            
+            response = requests.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=60
+            )
+            response.raise_for_status()
+            
+            result = response.json()
+            # Extract image URL from response - format may vary by model
+            # For image generation models, the response typically contains the image URL
+            if 'choices' in result and len(result['choices']) > 0:
+                content = result['choices'][0]['message']['content']
+                # The image URL might be in the content or we need to parse it
+                # For now, assume the model returns a URL or base64 encoded image
+                image_url = content.strip()
+            else:
+                await ctx.send("Error: Unexpected response format from OpenRouter API.")
+                return
 
-        async with aiohttp.ClientSession() as session:
-            async with session.get(image_url) as resp:
-                if resp.status == 200:
-                    img_bytes = await resp.read()
-                    # Save locally
-                    os.makedirs("generated_images", exist_ok=True)
-                    filename = f"{uuid.uuid4().hex}_{int(datetime.datetime.utcnow().timestamp())}.png"
-                    filepath = os.path.join("generated_images", filename)
-                    with open(filepath, "wb") as f:
-                        f.write(img_bytes)
-                    # Store metadata in DB
-                    async with AsyncSessionLocal() as db_session:
-                        from crud import create_generated_image
-                        user_id = str(ctx.author.id)
-                        db_image = await create_generated_image(db_session, user_id, filepath, prompt)
-                        if db_image is None:
-                            print(f"Error: Failed to store generated image metadata in DB for user {user_id}, prompt '{prompt}'.")
-                    await ctx.send(f"Image generated and saved: {filepath}")
-                    await ctx.send(file=discord.File(filepath))
-                else:
-                    await ctx.send("Failed to download generated image.")
-    except Exception as e:
-        await ctx.send(f"Image generation failed: {e}")
+            # Download image
+            import aiohttp
+            import datetime
+            import uuid
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(image_url) as resp:
+                    if resp.status == 200:
+                        img_bytes = await resp.read()
+                        # Save locally
+                        os.makedirs("generated_images", exist_ok=True)
+                        filename = f"{uuid.uuid4().hex}_{int(datetime.datetime.utcnow().timestamp())}.png"
+                        filepath = os.path.join("generated_images", filename)
+                        with open(filepath, "wb") as f:
+                            f.write(img_bytes)
+                        # Store metadata in DB
+                        async with AsyncSessionLocal() as db_session:
+                            from crud import create_generated_image
+                            user_id = str(ctx.author.id)
+                            db_image = await create_generated_image(db_session, user_id, filepath, prompt)
+                            if db_image is None:
+                                print(f"Error: Failed to store generated image metadata in DB for user {user_id}, prompt '{prompt}'.")
+                        await ctx.send(f"Image generated and saved: {filepath}")
+                        await ctx.send(file=discord.File(filepath))
+                    else:
+                        await ctx.send("Failed to download generated image.")
+        except Exception as e:
+            await ctx.send(f"Image generation failed: {e}")
+    finally:
+        if msg_id is not None and acquired:
+            async with _reply_in_progress_lock:
+                _reply_in_progress_message_ids.discard(msg_id)
 
 @bot.command(name="get-image")
 async def get_image(ctx, image_id: int = None):
@@ -572,41 +611,58 @@ async def status(ctx):
 
 @bot.command(name="submit-feature")
 async def submit_feature(ctx, *, arg: str = None):
-    """
-    Usage: /submit-feature <title> | <description>
-    """
-    if not arg or "|" not in arg:
-            try:
-                if hasattr(ctx, 'channel') and ctx.channel is not None and is_event_loop_running():
-                    await ctx.send("Usage: `/submit-feature <title> | <description>`")
-                else:
-                    print("Error: ctx.channel is None or event loop is closed. Cannot send submit-feature usage.")
-            except (AttributeError, RuntimeError) as e:
-                print(f"Error sending submit-feature usage: {e}")
-            return
-    title, description = [x.strip() for x in arg.split("|", 1)]
-    discord_link = ctx.message.jump_url
-    user_id = str(ctx.author.id)
+    # Deduplication logic for commands
+    global _reply_in_progress_message_ids, _reply_in_progress_lock
+    msg_id = getattr(ctx.message, "id", None)
+    acquired = False
+    if msg_id is not None:
+        async with _reply_in_progress_lock:
+            if msg_id in _reply_in_progress_message_ids:
+                print(f"[LOG] Duplicate reply prevented for message id: {msg_id}")
+                return
+            _reply_in_progress_message_ids.add(msg_id)
+            acquired = True
 
-    # Store feature request in PostgreSQL
-    from crud import create_feature_request
-    async with AsyncSessionLocal() as session:
-        fr = await create_feature_request(session, user_id, title, description)
-        if fr is None:
-            print(f"Error: Failed to create feature request for user {user_id}, title '{title}'.")
-
-    # Create GitHub PR
-    from github_integration import create_feature_branch_and_pr
-    pr_url = create_feature_branch_and_pr(title, description, discord_link)
-
-    # Notify Discord channel
     try:
-        if hasattr(ctx, 'channel') and ctx.channel is not None and is_event_loop_running():
-            await ctx.send(f"Feature request submitted and stored. PR created: {pr_url}")
-        else:
-            print("Error: ctx.channel is None or event loop is closed. Cannot send feature request submitted.")
-    except (AttributeError, RuntimeError) as e:
-        print(f"Error sending feature request submitted: {e}")
+        """
+        Usage: /submit-feature <title> | <description>
+        """
+        if not arg or "|" not in arg:
+                try:
+                    if hasattr(ctx, 'channel') and ctx.channel is not None and is_event_loop_running():
+                        await ctx.send("Usage: `/submit-feature <title> | <description>`")
+                    else:
+                        print("Error: ctx.channel is None or event loop is closed. Cannot send submit-feature usage.")
+                except (AttributeError, RuntimeError) as e:
+                    print(f"Error sending submit-feature usage: {e}")
+                return
+        title, description = [x.strip() for x in arg.split("|", 1)]
+        discord_link = ctx.message.jump_url
+        user_id = str(ctx.author.id)
+
+        # Store feature request in PostgreSQL
+        from crud import create_feature_request
+        async with AsyncSessionLocal() as session:
+            fr = await create_feature_request(session, user_id, title, description)
+            if fr is None:
+                print(f"Error: Failed to create feature request for user {user_id}, title '{title}'.")
+
+        # Create GitHub PR
+        from github_integration import create_feature_branch_and_pr
+        pr_url = create_feature_branch_and_pr(title, description, discord_link)
+
+        # Notify Discord channel
+        try:
+            if hasattr(ctx, 'channel') and ctx.channel is not None and is_event_loop_running():
+                await ctx.send(f"Feature request submitted and stored. PR created: {pr_url}")
+            else:
+                print("Error: ctx.channel is None or event loop is closed. Cannot send feature request submitted.")
+        except (AttributeError, RuntimeError) as e:
+            print(f"Error sending feature request submitted: {e}")
+    finally:
+        if msg_id is not None and acquired:
+            async with _reply_in_progress_lock:
+                _reply_in_progress_message_ids.discard(msg_id)
 
 if __name__ == "__main__":
     if not DISCORD_TOKEN:
