@@ -18,15 +18,22 @@ async def shutdown_discord_bot():
         logger.info("Discord bot is already stopped.")
         return
     logger.info("Stopping Discord bot...")
-    await bot.close()
-    logger.info("Discord bot stopped.")
+    try:
+        await bot.close()
+        logger.info("Discord bot stopped.")
+    except Exception as e:
+        logger.error(f"[DIAG] Exception during bot.close(): {e}")
 
 async def cancel_background_tasks():
     logger.info("Cancelling all background tasks...")
     tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
     for task in tasks:
         task.cancel()
-    await asyncio.gather(*tasks, return_exceptions=True)
+    try:
+        await asyncio.gather(*tasks, return_exceptions=True)
+        logger.info("[DIAG] Background tasks cancelled and awaited successfully.")
+    except Exception as e:
+        logger.error(f"[DIAG] Exception during background task cancellation: {e}")
     logger.info("All background tasks cancelled.")
 
 async def dispose_db():

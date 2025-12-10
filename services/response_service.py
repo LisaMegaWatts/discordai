@@ -76,41 +76,59 @@ class ResponseGenerationService:
         
         try:
             # Get user preferences
-            preferences = await self._get_user_preferences(user_id)
+            try:
+                preferences = await self._get_user_preferences(user_id)
+            except Exception as e:
+                logger.error(f"Error getting user preferences for user {user_id}: {e}", exc_info=True)
+                return self._get_fallback_response(intent)
             
-            # Build system prompt based on intent and preferences
-            system_prompt = self._build_system_prompt(intent, preferences)
+            try:
+                system_prompt = self._build_system_prompt(intent, preferences)
+            except Exception as e:
+                logger.error(f"Error building system prompt for intent '{intent}', user {user_id}: {e}", exc_info=True)
+                return self._get_fallback_response(intent)
             
-            # Build user prompt with context
-            user_prompt = self._build_user_prompt(
-                user_message,
-                intent,
-                entities,
-                conversation_context
-            )
+            try:
+                user_prompt = self._build_user_prompt(
+                    user_message,
+                    intent,
+                    entities,
+                    conversation_context
+                )
+            except Exception as e:
+                logger.error(f"Error building user prompt for user {user_id}: {e}", exc_info=True)
+                return self._get_fallback_response(intent)
             
-            # Call Claude API
-            response = await self.client.messages.create(
-                model=self.model,
-                max_tokens=500,  # Discord message limits
-                temperature=0.7,  # Natural, varied responses
-                system=system_prompt,
-                messages=[{
-                    "role": "user",
-                    "content": user_prompt
-                }]
-            )
+            try:
+                response = await self.client.messages.create(
+                    model=self.model,
+                    max_tokens=500,  # Discord message limits
+                    temperature=0.7,  # Natural, varied responses
+                    system=system_prompt,
+                    messages=[{
+                        "role": "user",
+                        "content": user_prompt
+                    }]
+                )
+            except Exception as e:
+                logger.error(f"Error calling Claude API for user {user_id}: {e}", exc_info=True)
+                return self._get_fallback_response(intent)
             
-            # Extract response text
-            response_text = response.content[0].text
+            try:
+                response_text = response.content[0].text
+            except Exception as e:
+                logger.error(f"Error extracting response text for user {user_id}: {e}", exc_info=True)
+                return self._get_fallback_response(intent)
             
-            # Apply emoji preferences
-            final_response = self._apply_emoji_preference(
-                response_text,
-                preferences.get('emoji_density', 'moderate')
-            )
+            try:
+                final_response = self._apply_emoji_preference(
+                    response_text,
+                    preferences.get('emoji_density', 'moderate')
+                )
+            except Exception as e:
+                logger.error(f"Error applying emoji preference for user {user_id}: {e}", exc_info=True)
+                return self._get_fallback_response(intent)
             
-            # Log performance
             elapsed_ms = int((time.time() - start_time) * 1000)
             logger.info(
                 f"Generated response for intent '{intent}' in {elapsed_ms}ms "
@@ -141,7 +159,7 @@ class ResponseGenerationService:
                 - language: Language code (default: en)
         """
         try:
-            prefs = await get_user_preferences(self.db, user_id)
+            prefs = await get_user_preferences(user_id)
             return {
                 'tone_preference': prefs.tone_preference,
                 'emoji_density': prefs.emoji_density,

@@ -73,7 +73,7 @@ class PerformanceUtils:
             
             # Load preferences for all users concurrently
             tasks = [
-                get_user_preferences(db_session, user_id)
+                get_user_preferences(user_id)
                 for user_id in user_ids
             ]
             
