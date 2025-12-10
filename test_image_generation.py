@@ -33,7 +33,6 @@ async def test_valid_prompt_generates_image(monkeypatch):
     message.channel.send = AsyncMock()
 
     with patch("discord_bot.AsyncSessionLocal", lambda: DummyAsyncSession()), \
-         patch("db.AsyncSessionLocal", lambda: DummyAsyncSession()), \
          patch("crud.create_generated_image", AsyncMock(return_value=True)):
         result = await discord_bot.generate_image_from_prompt("A sunset over mountains", "user123", message)
     assert "I've generated an image for" in result
@@ -52,7 +51,6 @@ async def test_unavailable_model(monkeypatch):
     monkeypatch.setattr("requests.post", lambda *a, **kw: mock_response)
     message = MagicMock()
     with patch("discord_bot.AsyncSessionLocal", lambda: DummyAsyncSession()), \
-         patch("db.AsyncSessionLocal", lambda: DummyAsyncSession()), \
          patch("crud.create_generated_image", AsyncMock(return_value=True)):
         result = await discord_bot.generate_image_from_prompt("A cat", "user123", message)
     assert "failed" in result or "Error" in result
@@ -64,7 +62,6 @@ async def test_api_failure(monkeypatch):
     monkeypatch.setattr("requests.post", lambda *a, **kw: mock_response)
     message = MagicMock()
     with patch("discord_bot.AsyncSessionLocal", lambda: DummyAsyncSession()), \
-         patch("db.AsyncSessionLocal", lambda: DummyAsyncSession()), \
          patch("crud.create_generated_image", AsyncMock(return_value=True)):
         result = await discord_bot.generate_image_from_prompt("A dog", "user123", message)
     assert "failed" in result or "Error" in result
@@ -77,7 +74,6 @@ async def test_invalid_api_response(monkeypatch):
     monkeypatch.setattr("requests.post", lambda *a, **kw: mock_response)
     message = MagicMock()
     with patch("discord_bot.AsyncSessionLocal", lambda: DummyAsyncSession()), \
-         patch("db.AsyncSessionLocal", lambda: DummyAsyncSession()), \
          patch("crud.create_generated_image", AsyncMock(return_value=True)):
         result = await discord_bot.generate_image_from_prompt("A robot", "user123", message)
     assert "Unexpected response format" in result or "Error" in result
@@ -104,7 +100,6 @@ async def test_image_metadata(monkeypatch):
     message.channel = AsyncMock()
     message.channel.send = AsyncMock()
     with patch("discord_bot.AsyncSessionLocal", lambda: DummyAsyncSession()), \
-         patch("db.AsyncSessionLocal", lambda: DummyAsyncSession()), \
          patch("crud.create_generated_image", AsyncMock(return_value=True)):
         result = await discord_bot.generate_image_from_prompt("A logo", "user123", message)
     assert "generated an image" in result
