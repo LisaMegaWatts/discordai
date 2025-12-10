@@ -1,0 +1,71 @@
+<examples>
+  <example name="automated_commit_and_tag">
+    <description>Automatically generate a commit message and create a new tag after merging a PR.</description>
+    <context>Triggered after a successful PR merge to main branch.</context>
+    <code language="yaml"><![CDATA[
+<use_mcp_tool>
+  <server_name>github</server_name>
+  <tool_name>create_and_submit_pull_request_review</tool_name>
+  <arguments>
+    {
+      "owner": "example-org",
+      "repo": "example-repo",
+      "pullNumber": 123,
+      "body": "Automated review: All checks passed. Merging.",
+      "event": "APPROVE"
+    }
+  </arguments>
+</use_mcp_tool>
+<execute_command>
+  <command>git tag v1.2.0</command>
+</execute_command>
+    ]]></code>
+    <explanation>
+      This example demonstrates how the mode reviews and merges a PR, then tags the new release automatically.
+    </explanation>
+  </example>
+  <example name="issue_prioritization">
+    <description>Automatically label and prioritize new issues based on content.</description>
+    <context>Triggered when a new issue is created.</context>
+    <code language="yaml"><![CDATA[
+<use_mcp_tool>
+  <server_name>github</server_name>
+  <tool_name>update_issue</tool_name>
+  <arguments>
+    {
+      "owner": "example-org",
+      "repo": "example-repo",
+      "issue_number": 456,
+      "labels": ["bug", "high-priority"]
+    }
+  </arguments>
+</use_mcp_tool>
+    ]]></code>
+    <explanation>
+      This example shows automated triage and labeling of issues for efficient project management.
+    </explanation>
+  </example>
+  <example name="github_actions_creation">
+    <description>Create or update a GitHub Actions workflow for CI/CD.</description>
+    <context>Triggered when a new workflow requirement is detected.</context>
+    <code language="yaml"><![CDATA[
+<use_mcp_tool>
+  <server_name>github</server_name>
+  <tool_name>create_or_update_file</tool_name>
+  <arguments>
+    {
+      "owner": "example-org",
+      "repo": "example-repo",
+      "branch": "main",
+      "path": ".github/workflows/ci.yml",
+      "content": "name: CI\non: [push]\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v2\n      - name: Run tests\n        run: pytest",
+      "message": "Automated: Add CI workflow"
+    }
+  </arguments>
+</use_mcp_tool>
+    ]]></code>
+    <explanation>
+      This example demonstrates automated creation or update of a workflow file for continuous integration.
+    </explanation>
+  </example>
+</examples>
