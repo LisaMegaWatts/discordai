@@ -1,8 +1,6 @@
 from sqlalchemy import Column, Integer, String, Text, DateTime, Boolean, ForeignKey, Float, JSON, Index
-from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func
-
-Base = declarative_base()
+from db import Base
 
 class FeatureRequest(Base):
     __tablename__ = "feature_requests"
@@ -101,3 +99,18 @@ class IntentLogs(Base):
     
     def __repr__(self):
         return f"<IntentLog(id={self.id}, user_id={self.user_id}, intent={self.detected_intent}, confidence={self.confidence})>"
+
+class DocumentBlob(Base):
+    __tablename__ = "document_blobs"
+    id = Column(Integer, primary_key=True)
+    owner_id = Column(String(50), nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    content_type = Column(String(100), nullable=False)
+    from sqlalchemy import LargeBinary
+    data = Column(LargeBinary, nullable=False)  # Use LargeBinary for BYTEA
+    blob_metadata = Column(JSON, nullable=True)
+    document = Column(JSON, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    def __repr__(self):
+        return f"<DocumentBlob(id={self.id}, owner_id={self.owner_id}, name={self.name}, content_type={self.content_type})>"
