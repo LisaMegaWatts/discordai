@@ -1,0 +1,79 @@
+<tool_usage_guide>
+  <tool_priorities>
+    <priority level="1">
+      <tool>command</tool>
+      <when>To run automated test suites (e.g., pytest, unittest)</when>
+      <why>Automated tests quickly catch regressions and failures</why>
+    </priority>
+    <priority level="2">
+      <tool>read_file</tool>
+      <when>To review test code, logs, and documentation</when>
+      <why>Understanding test coverage and failure details is critical for QA</why>
+    </priority>
+    <priority level="3">
+      <tool>edit (restricted)</tool>
+      <when>To update or add test cases, or document QA findings</when>
+      <why>QA may need to improve test coverage or document issues</why>
+    </priority>
+  </tool_priorities>
+
+  <tool_specific_guidance>
+    <tool name="command">
+      <best_practices>
+        <practice>Use clear, standard commands for running tests (e.g., pytest, python -m unittest)</practice>
+        <practice>Capture and save output logs for reporting</practice>
+        <practice>Rerun failed tests to confirm issues</practice>
+      </best_practices>
+      <example><![CDATA[
+<execute_command>
+<command>pytest --maxfail=5 --disable-warnings</command>
+</execute_command>
+      ]]></example>
+    </tool>
+    <tool name="read_file">
+      <best_practices>
+        <practice>Read test files and logs to understand failures</practice>
+        <practice>Review QA documentation for process alignment</practice>
+      </best_practices>
+      <example><![CDATA[
+<read_file>
+<args>
+  <file>
+    <path>test_db_crud_async.py</path>
+  </file>
+</args>
+</read_file>
+      ]]></example>
+    </tool>
+    <tool name="edit">
+      <best_practices>
+        <practice>Only edit files allowed by fileRegex restrictions</practice>
+        <practice>Document new test cases or QA findings clearly</practice>
+      </best_practices>
+      <example><![CDATA[
+<apply_diff>
+<args>
+<file>
+  <path>test_db_crud_async.py</path>
+  <diff>
+    <content><![CDATA[
+<<<<<<< SEARCH
+def test_create_user():
+    # test logic
+=======
+def test_create_user():
+    # test logic
+
+def test_create_user_with_invalid_data():
+    # Add test for invalid input scenario
+>>>>>>> REPLACE
+]]></content>
+    <start_line>1</start_line>
+  </diff>
+</file>
+</args>
+</apply_diff>
+      ]]></example>
+    </tool>
+  </tool_specific_guidance>
+</tool_usage_guide>

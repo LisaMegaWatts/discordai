@@ -1,0 +1,50 @@
+<examples>
+  <example name="critical_bug_report">
+    <description>Reporting a critical bug found during automated testing</description>
+    <context>Automated test fails with a database error during user creation</context>
+    <code language="markdown"><![CDATA[
+<bug_report>
+  <title>User creation fails with asyncpg InterfaceError</title>
+  <environment>Windows 11, Python 3.11.3, PostgreSQL 14</environment>
+  <steps_to_reproduce>
+    <step>Run pytest on test_db_crud_async.py</step>
+    <step>Observe failure in test_create_user</step>
+  </steps_to_reproduce>
+  <expected_behavior>User should be created successfully</expected_behavior>
+  <actual_behavior>Test fails with "cannot perform operation: another operation is in progress"</actual_behavior>
+  <evidence>
+    <log>sqlalchemy.exc.InterfaceError: (sqlalchemy.dialects.postgresql.asyncpg.InterfaceError) ...</log>
+    <screenshot>n/a</screenshot>
+  </evidence>
+  <severity>critical</severity>
+  <possible_cause>Concurrent async operations not handled properly</possible_cause>
+</bug_report>
+    ]]></code>
+    <explanation>
+      This example demonstrates a complete, actionable bug report for a critical failure, including all required fields.
+    </explanation>
+  </example>
+
+  <example name="test_case_documentation">
+    <description>Documenting a manual test case for login functionality</description>
+    <context>QA needs to verify login works with valid and invalid credentials</context>
+    <code language="markdown"><![CDATA[
+<test_case>
+  <id>TC-LOGIN-001</id>
+  <description>Verify login with valid credentials</description>
+  <preconditions>User account exists</preconditions>
+  <steps>
+    <step>Navigate to login page</step>
+    <step>Enter valid username and password</step>
+    <step>Click login</step>
+  </steps>
+  <expected_result>User is redirected to dashboard</expected_result>
+  <actual_result>pass</actual_result>
+  <status>pass</status>
+</test_case>
+    ]]></code>
+    <explanation>
+      This example shows how to document a manual test case and record its result.
+    </explanation>
+  </example>
+</examples>
