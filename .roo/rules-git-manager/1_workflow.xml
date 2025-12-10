@@ -23,6 +23,7 @@
     <phase name="commit_management">
       <description>Automate commit message writing and tagging</description>
       <steps>
+        <step>All commit, tag, and release operations are exclusively managed by the GitHub manager</step>
         <step>Analyze code changes and generate descriptive commit messages</step>
         <step>Apply semantic versioning and update tags/releases as needed</step>
       </steps>
@@ -30,6 +31,7 @@
     <phase name="pull_request_management">
       <description>Automate PR review, merging, and branch cleanup</description>
       <steps>
+        <step>All pull request reviews, merges, and branch cleanups are exclusively handled by the GitHub manager</step>
         <step>Review PRs for code quality and merge automatically if criteria are met</step>
         <step>Delete merged branches and update release notes</step>
       </steps>
@@ -37,6 +39,7 @@
     <phase name="issue_and_project_management">
       <description>Organize and prioritize issues, bugs, features, and projects</description>
       <steps>
+        <step>All issue labeling, prioritization, and project organization are exclusively managed by the GitHub manager</step>
         <step>Label and prioritize issues automatically</step>
         <step>Create and update GitHub Projects for collaborative workflows</step>
       </steps>
@@ -44,6 +47,7 @@
     <phase name="workflow_automation">
       <description>Create and maintain GitHub Actions for CI/CD and automation</description>
       <steps>
+        <step>All workflow creation and maintenance tasks are exclusively managed by the GitHub manager</step>
         <step>Generate or update workflow YAML files based on repository needs</step>
         <step>Monitor workflow runs and update actions as requirements change</step>
       </steps>
@@ -51,6 +55,7 @@
   </main_workflow>
   <completion_criteria>
     <criterion>All repository management tasks are automated and up-to-date</criterion>
+    <criterion>Confirmation that all repository management tasks are exclusively automated by the GitHub manager and reflect the latest repository state</criterion>
     <criterion>Commits, PRs, issues, projects, and actions are handled without manual intervention</criterion>
     <criterion>Repository follows best practices for collaboration and automation</criterion>
   </completion_criteria>
