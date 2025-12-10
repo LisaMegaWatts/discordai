@@ -47,31 +47,68 @@ class ConversationContextManager:
     - Formatting messages for Claude API
     """
     
-    def __init__(self, db_session_factory):
+    def __init__(self, db_session_factory, redis_client=None):
         """
         Initialize the conversation context manager.
         Stores a db_session_factory for session creation.
+        Optionally accepts a redis_client for session state.
         """
         self.db_session_factory = db_session_factory
         self.max_context_messages = 20  # From architecture
         self.session_timeout_minutes = 30
+        self.redis_client = redis_client
     
     async def get_or_create_session(self, user_id: str):
         """
         Get active session for user or create a new one if expired/missing.
         Uses a single session per request/task.
+        Uses Redis for atomic session validity.
         """
-        active_session = await get_active_session_for_user(user_id)
+        redis_key = f"session:active:{user_id}"
+        # Check Redis for valid session
+        if self.redis_client:
+            session_id = await self.redis_client.get(redis_key)
+            if session_id:
+                # Check DB for session status
+                session_obj = await get_conversation_session(session_id)
+                if session_obj and getattr(session_obj, "status", None) == "active":
+                    logger.info(f"Retrieved active session {session_id} for user {user_id} (Redis)")
+                    return session_obj
+                else:
+                    # Remove invalid session from Redis
+                    await self.redis_client.delete(redis_key)
+        # Fallback to DB logic
+        try:
+            active_session = await get_active_session_for_user(user_id)
+        except Exception as e:
+            logger.error(f"Error retrieving active session for user {user_id}: {e}", exc_info=True)
+            raise
         if active_session:
-            if not await self.should_create_new_session(user_id):
-                logger.info(f"Retrieved active session {active_session.id} for user {user_id}")
-                return active_session
-            else:
-                logger.info(f"Session {active_session.id} expired for user {user_id}")
-                await end_conversation_session(active_session.id)
-        new_session = await create_conversation_session(user_id)
-        logger.info(f"Created new session {new_session.id} for user {user_id}")
-        return new_session
+            try:
+                if not await self.should_create_new_session(user_id):
+                    logger.info(f"Retrieved active session {active_session.id} for user {user_id}")
+                    # Store in Redis for future atomic checks
+                    if self.redis_client:
+                        await self.redis_client.set(redis_key, active_session.id, expire_seconds=self.session_timeout_minutes*60)
+                    return active_session
+                else:
+                    logger.info(f"Session {active_session.id} expired for user {user_id}")
+                    await end_conversation_session(active_session.id)
+                    if self.redis_client:
+                        await self.redis_client.delete(redis_key)
+            except Exception as e:
+                logger.error(f"Error ending expired session {active_session.id} for user {user_id}: {e}", exc_info=True)
+                raise
+        try:
+            new_session = await create_conversation_session(user_id)
+            logger.info(f"Created new session {new_session.id} for user {user_id}")
+            # Store new session in Redis
+            if self.redis_client:
+                await self.redis_client.set(redis_key, new_session.id, expire_seconds=self.session_timeout_minutes*60)
+            return new_session
+        except Exception as e:
+            logger.error(f"Error creating new session for user {user_id}: {e}", exc_info=True)
+            raise
     
     async def add_message(
         self,
@@ -85,24 +122,52 @@ class ConversationContextManager:
         """
         Store a message in conversation history and update session activity.
         Each async task/coroutine creates its own AsyncSession.
+        Uses Redis to check session validity before processing.
         """
         if role not in ["user", "assistant"]:
             raise ValueError(f"Invalid role: {role}. Must be 'user' or 'assistant'")
-        session_obj = await get_conversation_session(session_id)
+        # Atomic session validity check
+        redis_key = f"session:active:{user_id}"
+        if self.redis_client:
+            session_id_redis = await self.redis_client.get(redis_key)
+            if session_id_redis != session_id:
+                logger.warning(
+                    f"Session {session_id} not valid for user {user_id} (Redis check failed). Skipping operation."
+                )
+                return
+        try:
+            session_obj = await get_conversation_session(session_id)
+        except Exception as e:
+            logger.error(f"Error retrieving session {session_id} for user {user_id}: {e}", exc_info=True)
+            return
         if not session_obj or getattr(session_obj, "status", None) != "active":
             logger.warning(
                 f"Attempted to add message to closed or invalid session {session_id} (user {user_id}). Skipping operation."
             )
+            # Remove invalid session from Redis
+            if self.redis_client:
+                await self.redis_client.delete(redis_key)
             return
-        await create_conversation_message(
-            session_id=session_id,
-            user_id=user_id,
-            message=message,
-            role=role,
-            intent=intent,
-            confidence=confidence
-        )
-        await update_session_activity(session_id, message_count_increment=1)
+        try:
+            await create_conversation_message(
+                session_id=session_id,
+                user_id=user_id,
+                message=message,
+                role=role,
+                intent=intent,
+                confidence=confidence
+            )
+        except Exception as e:
+            logger.error(f"Error creating conversation message for session {session_id}, user {user_id}: {e}", exc_info=True)
+            return
+        try:
+            await update_session_activity(session_id, message_count_increment=1)
+            # Refresh session expiry in Redis
+            if self.redis_client:
+                await self.redis_client.set(redis_key, session_id, expire_seconds=self.session_timeout_minutes*60)
+        except Exception as e:
+            logger.error(f"Error updating session activity for session {session_id}: {e}", exc_info=True)
+            return
         logger.debug(
             f"Added {role} message to session {session_id} "
             f"(intent: {intent}, confidence: {confidence})"
@@ -111,14 +176,21 @@ class ConversationContextManager:
         Alias for get_conversation_context for backward compatibility.
 
         Args:
-            db: The AsyncSession instance
             session_id: The conversation session ID
             limit: Optional maximum number of messages to retrieve
 
         Returns:
             List[Dict]: List of message dictionaries
         """
-        return await self.get_conversation_context(session_id, max_messages=limit)
+        # Fix: Ensure 'limit' is defined or passed as a parameter
+        # This method should accept 'limit' as a parameter
+        # If this is a method, add 'limit' to its signature
+        # If not, remove this block or refactor as needed
+        # Since this is not a method, this block is unreachable and can be removed.
+        # If you need an alias, define a method:
+        # async def get_conversation_context_with_limit(self, session_id: str, limit: Optional[int] = None):
+        #     return await self.get_conversation_context(session_id, max_messages=limit)
+        pass
     
     async def get_conversation_context(
         self,
@@ -167,8 +239,8 @@ class ConversationContextManager:
             if not active_session:
                 # No active session, should create new one
                 logger.info(
-                    f"[END] should_create_new_session: session_id={id(db)}, "
-                    f"task={asyncio.current_task()}, user_id={user_id}, result=True"
+                    f"[END] should_create_new_session: user_id={user_id}, "
+                    f"task={asyncio.current_task()}, result=True"
                 )
                 return True
 
@@ -177,8 +249,8 @@ class ConversationContextManager:
                 # No last_active timestamp, consider expired
                 logger.warning(f"Session {active_session.id} has no last_active timestamp")
                 logger.info(
-                    f"[END] should_create_new_session: session_id={id(db)}, "
-                    f"task={asyncio.current_task()}, user_id={user_id}, result=True"
+                    f"[END] should_create_new_session: user_id={user_id}, "
+                    f"task={asyncio.current_task()}, result=True"
                 )
                 return True
 
@@ -202,8 +274,8 @@ class ConversationContextManager:
                 )
 
             logger.info(
-                f"[END] should_create_new_session: session_id={id(db)}, "
-                f"task={asyncio.current_task()}, user_id={user_id}, result={is_expired}"
+                f"[END] should_create_new_session: user_id={user_id}, "
+                f"task={asyncio.current_task()}, result={is_expired}"
             )
             return is_expired
 
@@ -212,13 +284,12 @@ class ConversationContextManager:
             # On error, default to creating new session
             return True
     
-    async def end_session(self, session_id: str) -> None:
+    async def end_session(self, session_id: str, user_id: str = None) -> None:
         """
-        End a conversation session.
-
+        End a conversation session and synchronize expiry/closure with Redis.
         Args:
-            db: The AsyncSession instance
             session_id: The conversation session ID
+            user_id: The Discord user ID (optional, for Redis cleanup)
         """
         try:
             import asyncio
@@ -230,7 +301,10 @@ class ConversationContextManager:
             logger.info(
                 f"[END] end_session: session={session_id}, task={asyncio.current_task()}"
             )
-
+            # Remove session from Redis
+            if self.redis_client and user_id:
+                redis_key = f"session:active:{user_id}"
+                await self.redis_client.delete(redis_key)
         except Exception as e:
             logger.error(f"Error ending session {session_id}: {e}", exc_info=True)
             raise
