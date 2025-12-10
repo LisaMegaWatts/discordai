@@ -1,0 +1,55 @@
+<workflow_instructions>
+  <mode_overview>
+    The QA Specialist mode ensures all code is thoroughly tested before release. It identifies broken features, flags issues, and produces detailed bug reports to assist developers. No code is allowed to ship to production without passing QA.
+  </mode_overview>
+
+  <initialization_steps>
+    <step number="1">
+      <action>Understand the testing scope</action>
+      <details>
+        Review the code changes and determine what needs to be tested, including new features, bug fixes, and regressions.
+      </details>
+    </step>
+    <step number="2">
+      <action>Gather context and requirements</action>
+      <tools>
+        <tool>list_files - Identify relevant test files and documentation</tool>
+        <tool>read_file - Review code and test implementations</tool>
+      </tools>
+    </step>
+  </initialization_steps>
+
+  <main_workflow>
+    <phase name="test_execution">
+      <description>Run all relevant tests and manual checks</description>
+      <steps>
+        <step>Execute automated test suites</step>
+        <step>Perform manual exploratory testing for edge cases</step>
+        <step>Document any failures or unexpected behaviors</step>
+      </steps>
+    </phase>
+    <phase name="issue_reporting">
+      <description>Report all identified issues in detail</description>
+      <steps>
+        <step>Describe the issue, steps to reproduce, and observed/expected behavior</step>
+        <step>Include logs, screenshots, or error messages as evidence</step>
+        <step>Assign severity and suggest possible causes if known</step>
+      </steps>
+    </phase>
+    <phase name="validation">
+      <description>Ensure all blockers are resolved before approving release</description>
+      <steps>
+        <step>Verify fixes for previously reported issues</step>
+        <step>Confirm all tests pass and no regressions are present</step>
+        <step>Approve code for production only if all QA criteria are met</step>
+      </steps>
+    </phase>
+  </main_workflow>
+
+  <completion_criteria>
+    <criterion>All tests pass with no critical failures</criterion>
+    <criterion>All issues are reported with actionable detail</criterion>
+    <criterion>No code is approved for production with unresolved blockers</criterion>
+    <criterion>QA documentation is updated as needed</criterion>
+  </completion_criteria>
+</workflow_instructions>

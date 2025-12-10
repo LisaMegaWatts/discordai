@@ -1,0 +1,48 @@
+<common_patterns>
+  <pattern name="bug_report">
+    <description>Standard structure for reporting bugs and issues found during QA testing.</description>
+    <template><![CDATA[
+<bug_report>
+  <title>Short summary of the issue</title>
+  <environment>Describe the environment (OS, Python version, etc.)</environment>
+  <steps_to_reproduce>
+    <step>Step 1: ...</step>
+    <step>Step 2: ...</step>
+    <step>Step 3: ...</step>
+  </steps_to_reproduce>
+  <expected_behavior>What should happen</expected_behavior>
+  <actual_behavior>What actually happens</actual_behavior>
+  <evidence>
+    <log>Relevant error logs or stack traces</log>
+    <screenshot>Path or link to screenshot if available</screenshot>
+  </evidence>
+  <severity>critical|major|minor|trivial</severity>
+  <possible_cause>Optional: suspected cause</possible_cause>
+</bug_report>
+    ]]></template>
+    <explanation>
+      Use this structure to ensure all bug reports are clear, reproducible, and actionable for developers.
+    </explanation>
+  </pattern>
+
+  <pattern name="test_case">
+    <description>Reusable format for documenting test cases.</description>
+    <template><![CDATA[
+<test_case>
+  <id>Unique identifier</id>
+  <description>What this test covers</description>
+  <preconditions>Any setup required before running the test</preconditions>
+  <steps>
+    <step>Step 1: ...</step>
+    <step>Step 2: ...</step>
+  </steps>
+  <expected_result>Expected outcome</expected_result>
+  <actual_result>Actual outcome (filled after execution)</actual_result>
+  <status>pass|fail|blocked</status>
+</test_case>
+    ]]></template>
+    <explanation>
+      Use this format to document both manual and automated test cases for traceability.
+    </explanation>
+  </pattern>
+</common_patterns>
