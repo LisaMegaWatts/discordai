@@ -1,81 +1,76 @@
 <best_practices>
   <general_principles>
     <principle priority="high">
-      <name>Test Before Release</name>
-      <description>All code must be tested before being merged or deployed to production.</description>
-      <rationale>Prevents broken features and regressions from reaching users.</rationale>
+      <name>Test Before Commit</name>
+      <description>Always run the full test suite before committing any code changes.</description>
+      <rationale>Prevents regressions and ensures code stability.</rationale>
       <example>
-        <scenario>Before merging a feature branch</scenario>
-        <good>Run all automated and manual tests, report issues, block merge if failures found</good>
-        <bad>Merge code without running tests or reviewing results</bad>
+        <scenario>Before pushing a feature branch</scenario>
+        <good>Run all tests and verify 100% pass rate</good>
+        <bad>Commit code without running tests</bad>
       </example>
     </principle>
     <principle priority="high">
-      <name>Detailed Issue Reporting</name>
-      <description>Every bug or failure must be reported with clear steps to reproduce, observed/expected behavior, and supporting evidence.</description>
-      <rationale>Helps developers quickly understand and fix issues.</rationale>
+      <name>Update Tests with Code Changes</name>
+      <description>Update or add tests whenever code is modified, especially for new features or bug fixes.</description>
+      <rationale>Ensures new logic is covered and prevents untested changes.</rationale>
       <example>
-        <scenario>Test fails with error</scenario>
-        <good>Include error logs, screenshots, and reproduction steps in the report</good>
-        <bad>Report "it broke" with no details</bad>
+        <scenario>Refactoring a function</scenario>
+        <good>Add or update tests for all new behaviors</good>
+        <bad>Leave old tests unchanged after refactor</bad>
       </example>
     </principle>
     <principle priority="medium">
-      <name>Regression and Edge Case Testing</name>
-      <description>Test not only new features but also existing functionality and edge cases.</description>
-      <rationale>Ensures changes do not break unrelated parts of the system.</rationale>
+      <name>Isolate Test Failures</name>
+      <description>Investigate and resolve any failing tests before proceeding.</description>
+      <rationale>Unresolved failures may hide new issues or regressions.</rationale>
       <example>
-        <scenario>Adding a new database field</scenario>
-        <good>Test old and new workflows, including empty/null values</good>
-        <bad>Only test the new field, ignore existing features</bad>
+        <scenario>Test fails after a merge</scenario>
+        <good>Fix the test or the code before continuing</good>
+        <bad>Ignore the failure and continue development</bad>
       </example>
     </principle>
   </general_principles>
-
   <code_conventions>
-    <convention category="test_naming">
-      <rule>Use descriptive names for test functions and files</rule>
+    <convention category="naming">
+      <rule>Name test files and functions clearly to reflect what they validate.</rule>
       <examples>
-        <good>test_user_login_success.py, test_handle_empty_input()</good>
-        <bad>test1.py, test_func()</bad>
+        <good>test_user_login.py, test_api_response.js</good>
+        <bad>test1.py, temp_test.js</bad>
       </examples>
     </convention>
     <convention category="structure">
-      <rule>Organize tests by feature or module</rule>
+      <rule>Organize tests by feature or module for clarity and maintainability.</rule>
       <template>
-        tests/
-          test_auth.py
-          test_db_crud_async.py
-          test_api_endpoints.py
+        # Example: Place tests in a __tests__ directory or use *.test.* naming
       </template>
     </convention>
   </code_conventions>
-
   <common_pitfalls>
     <pitfall>
-      <description>Ignoring failed tests or warnings</description>
-      <why_problematic>Allows bugs to slip into production</why_problematic>
-      <correct_approach>Investigate and resolve all failures before approving code</correct_approach>
+      <description>Skipping tests to speed up commits</description>
+      <why_problematic>Allows undetected bugs and regressions into mainline code.</why_problematic>
+      <correct_approach>Always run all tests before commit, even for small changes.</correct_approach>
     </pitfall>
     <pitfall>
-      <description>Inadequate bug reports</description>
-      <why_problematic>Slows down debugging and resolution</why_problematic>
-      <correct_approach>Always provide full context and evidence in reports</correct_approach>
+      <description>Not updating tests after code changes</description>
+      <why_problematic>Leads to outdated or misleading test coverage.</why_problematic>
+      <correct_approach>Review and update tests with every code change.</correct_approach>
     </pitfall>
   </common_pitfalls>
-
   <quality_checklist>
-    <category name="before_testing">
-      <item>Review code changes and requirements</item>
-      <item>Identify all affected features</item>
+    <category name="before_starting">
+      <item>Review code changes and affected features</item>
+      <item>Identify relevant test files</item>
     </category>
-    <category name="during_testing">
-      <item>Run all relevant automated and manual tests</item>
-      <item>Document failures with detail</item>
+    <category name="during_implementation">
+      <item>Write or update tests for all new/changed logic</item>
+      <item>Run tests frequently during development</item>
     </category>
-    <category name="before_approval">
-      <item>Verify all issues are resolved</item>
-      <item>Confirm no regressions or new failures</item>
+    <category name="before_completion">
+      <item>Ensure all tests pass</item>
+      <item>Check for adequate test coverage</item>
+      <item>Confirm no regressions or breaking changes</item>
     </category>
   </quality_checklist>
 </best_practices>

@@ -1,77 +1,57 @@
 <tool_usage_guide>
   <tool_priorities>
     <priority level="1">
-      <tool>command</tool>
-      <when>To run automated test suites (e.g., pytest, unittest)</when>
-      <why>Automated tests quickly catch regressions and failures</why>
+      <tool>list_files</tool>
+      <when>To discover all test files and directories</when>
+      <why>Ensures no test files are missed during analysis</why>
     </priority>
     <priority level="2">
       <tool>read_file</tool>
-      <when>To review test code, logs, and documentation</when>
-      <why>Understanding test coverage and failure details is critical for QA</why>
+      <when>To review or analyze the content of test files</when>
+      <why>Provides context for updating or writing new tests</why>
     </priority>
     <priority level="3">
-      <tool>edit (restricted)</tool>
-      <when>To update or add test cases, or document QA findings</when>
-      <why>QA may need to improve test coverage or document issues</why>
+      <tool>command</tool>
+      <when>To run test suites (e.g., pytest, unittest, npm test)</when>
+      <why>Executes all relevant tests to validate code changes</why>
+    </priority>
+    <priority level="4">
+      <tool>apply_diff</tool>
+      <when>To update or add test files as needed</when>
+      <why>Allows precise, controlled edits to test code</why>
     </priority>
   </tool_priorities>
-
   <tool_specific_guidance>
     <tool name="command">
       <best_practices>
-        <practice>Use clear, standard commands for running tests (e.g., pytest, python -m unittest)</practice>
-        <practice>Capture and save output logs for reporting</practice>
-        <practice>Rerun failed tests to confirm issues</practice>
+        <practice>Always run the full test suite before commit</practice>
+        <practice>Use verbose output to diagnose failures</practice>
+        <practice>Rerun only failed tests for faster feedback during development</practice>
       </best_practices>
       <example><![CDATA[
 <execute_command>
-<command>pytest --maxfail=5 --disable-warnings</command>
+<command>pytest --maxfail=1 --disable-warnings -v</command>
 </execute_command>
       ]]></example>
     </tool>
-    <tool name="read_file">
+    <tool name="apply_diff">
       <best_practices>
-        <practice>Read test files and logs to understand failures</practice>
-        <practice>Review QA documentation for process alignment</practice>
-      </best_practices>
-      <example><![CDATA[
-<read_file>
-<args>
-  <file>
-    <path>test_db_crud_async.py</path>
-  </file>
-</args>
-</read_file>
-      ]]></example>
-    </tool>
-    <tool name="edit">
-      <best_practices>
-        <practice>Only edit files allowed by fileRegex restrictions</practice>
-        <practice>Document new test cases or QA findings clearly</practice>
+        <practice>Read the test file before making changes</practice>
+        <practice>Group related test updates in a single diff when possible</practice>
+        <practice>Include line numbers for accuracy</practice>
       </best_practices>
       <example><![CDATA[
 <apply_diff>
-<args>
-<file>
-  <path>test_db_crud_async.py</path>
-  <diff>
-    <content><![CDATA[
+<path>test_example.py</path>
+<diff>
 <<<<<<< SEARCH
-def test_create_user():
-    # test logic
+def test_old_behavior():
+    assert old_func() == 1
 =======
-def test_create_user():
-    # test logic
-
-def test_create_user_with_invalid_data():
-    # Add test for invalid input scenario
+def test_new_behavior():
+    assert new_func() == 2
 >>>>>>> REPLACE
-]]></content>
-    <start_line>1</start_line>
-  </diff>
-</file>
-</args>
+</diff>
 </apply_diff>
       ]]></example>
     </tool>

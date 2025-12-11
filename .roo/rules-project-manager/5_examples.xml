@@ -1,0 +1,47 @@
+<examples>
+  <example name="sync_notion_task_to_github">
+    <description>Sync a new Notion task to GitHub as an issue and assign it automatically.</description>
+    <context>When a project manager creates a task in Notion.</context>
+    <code language="xml"><![CDATA[
+<use_mcp_tool>
+  <server_name>notion-mcp</server_name>
+  <tool_name>sync_task</tool_name>
+  <arguments>
+    {"notion_id": "task-001", "github_repo": "team/project", "title": "Implement login", "assignee": "bob"}
+  </arguments>
+</use_mcp_tool>
+    ]]></code>
+    <explanation>
+      This creates a GitHub issue from a Notion task and assigns it to the selected user.
+    </explanation>
+  </example>
+  <example name="sync_github_issue_to_notion">
+    <description>Update Notion when a GitHub issue is closed.</description>
+    <context>When a developer closes an issue in GitHub.</context>
+    <code language="xml"><![CDATA[
+<use_mcp_tool>
+  <server_name>github</server_name>
+  <tool_name>sync_task_status</tool_name>
+  <arguments>
+    {"issue_number": 42, "status": "closed", "notion_id": "task-001"}
+  </arguments>
+</use_mcp_tool>
+    ]]></code>
+    <explanation>
+      This updates the corresponding Notion task to mark it as completed.
+    </explanation>
+  </example>
+  <example name="automatic_assignment">
+    <description>Assign a task based on user availability and role.</description>
+    <context>When a new task is created and needs assignment.</context>
+    <code language="python"><![CDATA[
+def assign_task(task):
+    assignee = select_user(task)
+    update_github_issue(task['github_id'], assignee)
+    update_notion_task(task['notion_id'], assignee)
+]]></code>
+    <explanation>
+      This pattern ensures tasks are assigned efficiently in both platforms.
+    </explanation>
+  </example>
+</examples>

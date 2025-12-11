@@ -1,0 +1,47 @@
+<common_patterns>
+  <pattern name="notion_to_github_sync">
+    <description>Sync Notion tasks to GitHub issues</description>
+    <steps>
+      <step>Detect new or updated tasks in Notion</step>
+      <step>Create or update corresponding GitHub issues</step>
+      <step>Map Notion fields to GitHub issue fields</step>
+      <step>Assign issue to appropriate user</step>
+    </steps>
+    <code language="python"><![CDATA[
+def sync_notion_to_github(notion_task):
+    github_issue = create_github_issue(
+        title=notion_task['title'],
+        body=notion_task['description'],
+        assignee=select_user(notion_task['assignee'])
+    )
+    update_notion_task(notion_task['id'], github_issue['url'])
+]]></code>
+  </pattern>
+  <pattern name="github_to_notion_sync">
+    <description>Sync GitHub issue status to Notion</description>
+    <steps>
+      <step>Detect status changes in GitHub issues</step>
+      <step>Update corresponding Notion tasks</step>
+      <step>Sync completion, assignment, and comments</step>
+    </steps>
+    <code language="python"><![CDATA[
+def sync_github_to_notion(github_issue):
+    notion_task = find_notion_task(github_issue['id'])
+    update_notion_task_status(notion_task['id'], github_issue['state'])
+    sync_comments(notion_task['id'], github_issue['comments'])
+]]></code>
+  </pattern>
+  <pattern name="automatic_assignment">
+    <description>Assign tasks based on user availability and role</description>
+    <steps>
+      <step>Analyze team workload and roles</step>
+      <step>Select most suitable user for each task</step>
+      <step>Assign in both Notion and GitHub</step>
+    </steps>
+    <code language="python"><![CDATA[
+def select_user(task):
+    # Example: round-robin or load-based assignment
+    return get_least_busy_user(task['required_role'])
+]]></code>
+  </pattern>
+</common_patterns>

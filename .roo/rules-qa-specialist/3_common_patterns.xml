@@ -1,48 +1,57 @@
 <common_patterns>
-  <pattern name="bug_report">
-    <description>Standard structure for reporting bugs and issues found during QA testing.</description>
-    <template><![CDATA[
-<bug_report>
-  <title>Short summary of the issue</title>
-  <environment>Describe the environment (OS, Python version, etc.)</environment>
-  <steps_to_reproduce>
-    <step>Step 1: ...</step>
-    <step>Step 2: ...</step>
-    <step>Step 3: ...</step>
-  </steps_to_reproduce>
-  <expected_behavior>What should happen</expected_behavior>
-  <actual_behavior>What actually happens</actual_behavior>
-  <evidence>
-    <log>Relevant error logs or stack traces</log>
-    <screenshot>Path or link to screenshot if available</screenshot>
-  </evidence>
-  <severity>critical|major|minor|trivial</severity>
-  <possible_cause>Optional: suspected cause</possible_cause>
-</bug_report>
-    ]]></template>
+  <pattern name="test_file_structure">
+    <description>Standard structure for test files to ensure consistency and readability.</description>
+    <code language="python"><![CDATA[
+import pytest
+
+def test_feature_behavior():
+    # Arrange
+    # ... setup code ...
+    # Act
+    result = function_under_test()
+    # Assert
+    assert result == expected_value
+]]></code>
     <explanation>
-      Use this structure to ensure all bug reports are clear, reproducible, and actionable for developers.
+      Use Arrange-Act-Assert (AAA) pattern for all tests. This improves clarity and makes failures easier to diagnose.
     </explanation>
   </pattern>
-
-  <pattern name="test_case">
-    <description>Reusable format for documenting test cases.</description>
-    <template><![CDATA[
-<test_case>
-  <id>Unique identifier</id>
-  <description>What this test covers</description>
-  <preconditions>Any setup required before running the test</preconditions>
-  <steps>
-    <step>Step 1: ...</step>
-    <step>Step 2: ...</step>
-  </steps>
-  <expected_result>Expected outcome</expected_result>
-  <actual_result>Actual outcome (filled after execution)</actual_result>
-  <status>pass|fail|blocked</status>
-</test_case>
-    ]]></template>
+  <pattern name="test_naming_convention">
+    <description>Consistent naming for test functions and files.</description>
+    <code language="python"><![CDATA[
+# Good: test_user_login.py, test_api_response.py
+def test_user_login_success():
+    ...
+]]></code>
     <explanation>
-      Use this format to document both manual and automated test cases for traceability.
+      Name test files and functions to clearly indicate what is being tested and under what conditions.
+    </explanation>
+  </pattern>
+  <pattern name="mocking_external_dependencies">
+    <description>Pattern for mocking external services in tests.</description>
+    <code language="python"><![CDATA[
+from unittest.mock import patch
+
+@patch('services.api_client.get_data')
+def test_service_with_mocked_api(mock_get_data):
+    mock_get_data.return_value = {'key': 'value'}
+    result = my_service_function()
+    assert result == expected_result
+]]></code>
+    <explanation>
+      Use mocking to isolate the unit under test and avoid flaky tests due to external dependencies.
+    </explanation>
+  </pattern>
+  <pattern name="test_automation_workflow">
+    <description>Automated workflow for running tests before commit.</description>
+    <steps>
+      <step>Detect changed files</step>
+      <step>Identify affected tests</step>
+      <step>Run all relevant tests</step>
+      <step>Block commit if any test fails</step>
+    </steps>
+    <explanation>
+      Integrate this workflow into pre-commit hooks or CI pipelines to enforce quality gates.
     </explanation>
   </pattern>
 </common_patterns>
