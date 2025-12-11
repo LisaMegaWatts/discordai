@@ -394,7 +394,7 @@ The bot remembers:
 
 **Q: Can the bot remember our previous conversations?**
 
-A: Yes! The bot remembers your conversation for 30 minutes after your last message. After that, it starts a fresh conversation. All your messages are stored for context during active sessions.
+A: Yes! The bot uses persistent memory and session management to remember your conversation for 30 minutes after your last message. Sessions are reliably maintained across bot restarts, Redis flushes, and multi-instance deployments.
 
 **Q: Does the bot work in DMs?**
 
@@ -407,6 +407,10 @@ A: Absolutely! All original slash commands (`/generate-image`, `/submit-feature`
 **Q: How does the bot understand what I want?**
 
 A: The bot uses Claude AI to analyze your message and determine your intent. It looks at the words you use, the context of your conversation, and patterns in how people typically communicate requests.
+
+**Q: Are secrets stored securely?**
+
+A: Yes. All secrets are stored in environment variables only. Git history was rewritten to remove secrets from all tracked files and commits. Never commit secrets to version control.
 
 ### Image Generation
 

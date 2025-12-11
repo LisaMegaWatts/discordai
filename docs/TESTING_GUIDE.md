@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide provides comprehensive instructions for testing the conversational bot features, including semantic intent detection, conversation context management, and natural language interactions. Use this guide to verify all functionality works as expected.
+This guide provides comprehensive instructions for testing the conversational bot features, including semantic intent detection, persistent memory, session management, and natural language interactions. Use this guide to verify all functionality works as expected.
 
 ## Table of Contents
 

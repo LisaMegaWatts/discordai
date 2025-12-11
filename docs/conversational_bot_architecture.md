@@ -1192,6 +1192,17 @@ class EnhancedImageGeneration:
 
 ## 9. Performance Considerations
 
+### Persistent Memory & Session Reliability
+
+- **Redis Integration**: Session state and message history are stored in Redis for fast access. Automatic fallback to the database ensures durability and recovery after restarts or Redis failures.
+- **Session Management**: Sessions are reliably tracked and maintained across bot restarts, Redis flushes, and multi-instance deployments. Session timeouts and context windows are enforced for consistent user experience.
+- **Bot Reliability**: Recovery logic enables seamless operation during failures. The bot is resilient to Redis outages and database reconnections.
+
+### Security & History Rewrite
+
+- **Secrets Removal**: All secrets have been removed from history and configuration files. Only environment variables are used for sensitive data.
+- **History Rewrite**: Git history was rewritten to remove secrets. If you previously cloned the repository, re-pull or re-clone to ensure secrets are not present.
+
 ### Token Usage Optimization
 
 ```python

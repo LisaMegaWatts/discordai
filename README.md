@@ -78,6 +78,18 @@ No more memorizing command syntax! Just talk to the bot like you would to a pers
   - [`001_create_tables.sql`](migrations/001_create_tables.sql) - Original tables
   - [`002_add_conversation_tables.sql`](migrations/002_add_conversation_tables.sql) - Conversational features
 
+### Persistent Memory & Session Management
+
+- **[`services/conversation_service.py`](services/conversation_service.py)**: Manages persistent memory, session state, and context retention using Redis and database fallback.
+- **[`services/redis_utils.py`](services/redis_utils.py)**: Handles Redis integration for fast session and message history storage.
+- **Session Management**: Sessions are tracked and reliably maintained across bot restarts, Redis flushes, and multi-instance deployments. Session timeouts and context windows are enforced for consistent user experience.
+- **Bot Reliability**: Recovery logic ensures seamless operation during failures. The bot is resilient to Redis outages and database reconnections.
+
+### Security & History Rewrite
+
+- **Secrets Removal**: All secrets have been removed from history and configuration files. Only environment variables are used for sensitive data.
+- **History Rewrite**: Git history was rewritten to remove secrets. If you previously cloned the repository, re-pull or re-clone to ensure secrets are not present.
+
 ### New Services (v2.0)
 
 - **[`services/intent_service.py`](services/intent_service.py)**: Semantic intent detection using Claude
