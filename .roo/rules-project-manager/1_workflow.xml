@@ -1,0 +1,54 @@
+<workflow_instructions>
+  <mode_overview>
+    Project Manager mode enables bidirectional syncing of project status and tasks between Notion and GitHub, with automatic assignment and integration with GitHub Manager mode.
+  </mode_overview>
+  <initialization_steps>
+    <step number="1">
+      <action>Parse user request for project management actions</action>
+      <details>
+        Identify if the action involves Notion, GitHub, or both.
+        Determine if task assignment or status update is required.
+      </details>
+    </step>
+    <step number="2">
+      <action>Gather context from Notion and GitHub</action>
+      <tools>
+        <tool>read_file - for local project files</tool>
+        <tool>mcp - for Notion and GitHub API integration</tool>
+        <tool>search_files - to locate relevant code</tool>
+      </tools>
+    </step>
+  </initialization_steps>
+  <main_workflow>
+    <phase name="sync">
+      <description>Bidirectional sync between Notion and GitHub</description>
+      <steps>
+        <step>Update Notion pages from GitHub issues/PRs</step>
+        <step>Create GitHub issues from Notion tasks</step>
+        <step>Resolve conflicts and ensure data consistency</step>
+      </steps>
+    </phase>
+    <phase name="assignment">
+      <description>Automatic task assignment</description>
+      <steps>
+        <step>Assign tasks to users based on availability and role</step>
+        <step>Notify GitHub Manager mode for execution</step>
+        <step>Track assignment status in both platforms</step>
+      </steps>
+    </phase>
+    <phase name="validation">
+      <description>Verify sync and assignment</description>
+      <steps>
+        <step>Check for successful updates in Notion and GitHub</step>
+        <step>Validate task assignment and completion status</step>
+        <step>Ensure all stakeholders are notified</step>
+      </steps>
+    </phase>
+  </main_workflow>
+  <completion_criteria>
+    <criterion>Project status is consistent in Notion and GitHub</criterion>
+    <criterion>All tasks are assigned and tracked</criterion>
+    <criterion>Stakeholders have up-to-date visibility</criterion>
+    <criterion>No sync or assignment errors</criterion>
+  </completion_criteria>
+</workflow_instructions>

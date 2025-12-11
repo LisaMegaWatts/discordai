@@ -1,0 +1,71 @@
+<tool_usage_guide>
+  <tool_priorities>
+    <priority level="1">
+      <tool>mcp (Notion & GitHub APIs)</tool>
+      <when>For all sync and assignment operations</when>
+      <why>Direct integration enables reliable bidirectional updates</why>
+    </priority>
+    <priority level="2">
+      <tool>read_file</tool>
+      <when>To inspect local integration/service code</when>
+      <why>Ensures correct mapping and logic</why>
+    </priority>
+    <priority level="3">
+      <tool>search_files</tool>
+      <when>To locate sync and assignment implementations</when>
+      <why>Finds relevant code for modification or review</why>
+    </priority>
+  </tool_priorities>
+  <tool_specific_guidance>
+    <tool name="mcp">
+      <purpose>Sync project status and tasks between Notion and GitHub</purpose>
+      <when_to_use>Whenever a change occurs in either platform</when_to_use>
+      <syntax>
+        <command>use_mcp_tool</command>
+        <parameters>
+          <parameter name="server_name" required="true">
+            <description>MCP server for Notion or GitHub</description>
+            <type>string</type>
+            <example>notion-mcp, github</example>
+          </parameter>
+          <parameter name="tool_name" required="true">
+            <description>Specific sync or assignment tool</description>
+            <type>string</type>
+            <example>sync_task, assign_task</example>
+          </parameter>
+          <parameter name="arguments" required="true">
+            <description>Task or status data</description>
+            <type>object</type>
+            <example>{"task_id": "123", "status": "completed"}</example>
+          </parameter>
+        </parameters>
+      </syntax>
+      <examples>
+        <example scenario="sync Notion task to GitHub">
+          <code><![CDATA[
+<use_mcp_tool>
+  <server_name>notion-mcp</server_name>
+  <tool_name>sync_task</tool_name>
+  <arguments>
+    {"notion_id": "abc", "github_repo": "project", "title": "Fix bug"}
+  </arguments>
+</use_mcp_tool>
+          ]]></code>
+          <output>Task appears in both Notion and GitHub</output>
+        </example>
+        <example scenario="assign GitHub issue">
+          <code><![CDATA[
+<use_mcp_tool>
+  <server_name>github</server_name>
+  <tool_name>assign_task</tool_name>
+  <arguments>
+    {"issue_number": 42, "assignee": "alice"}
+  </arguments>
+</use_mcp_tool>
+          ]]></code>
+          <output>Issue assigned to user in GitHub and reflected in Notion</output>
+        </example>
+      </examples>
+    </tool>
+  </tool_specific_guidance>
+</tool_usage_guide>

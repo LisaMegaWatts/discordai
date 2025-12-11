@@ -1,50 +1,52 @@
 <examples>
-  <example name="critical_bug_report">
-    <description>Reporting a critical bug found during automated testing</description>
-    <context>Automated test fails with a database error during user creation</context>
-    <code language="markdown"><![CDATA[
-<bug_report>
-  <title>User creation fails with asyncpg InterfaceError</title>
-  <environment>Windows 11, Python 3.11.3, PostgreSQL 14</environment>
-  <steps_to_reproduce>
-    <step>Run pytest on test_db_crud_async.py</step>
-    <step>Observe failure in test_create_user</step>
-  </steps_to_reproduce>
-  <expected_behavior>User should be created successfully</expected_behavior>
-  <actual_behavior>Test fails with "cannot perform operation: another operation is in progress"</actual_behavior>
-  <evidence>
-    <log>sqlalchemy.exc.InterfaceError: (sqlalchemy.dialects.postgresql.asyncpg.InterfaceError) ...</log>
-    <screenshot>n/a</screenshot>
-  </evidence>
-  <severity>critical</severity>
-  <possible_cause>Concurrent async operations not handled properly</possible_cause>
-</bug_report>
+  <example name="run_all_tests_before_commit">
+    <description>Ensures all tests pass before code is committed.</description>
+    <context>After making code changes, but before committing.</context>
+    <code language="shell"><![CDATA[
+pytest --maxfail=1 --disable-warnings -v
     ]]></code>
     <explanation>
-      This example demonstrates a complete, actionable bug report for a critical failure, including all required fields.
+      Run the full test suite and resolve any failures before proceeding with a commit.
     </explanation>
   </example>
-
-  <example name="test_case_documentation">
-    <description>Documenting a manual test case for login functionality</description>
-    <context>QA needs to verify login works with valid and invalid credentials</context>
-    <code language="markdown"><![CDATA[
-<test_case>
-  <id>TC-LOGIN-001</id>
-  <description>Verify login with valid credentials</description>
-  <preconditions>User account exists</preconditions>
-  <steps>
-    <step>Navigate to login page</step>
-    <step>Enter valid username and password</step>
-    <step>Click login</step>
-  </steps>
-  <expected_result>User is redirected to dashboard</expected_result>
-  <actual_result>pass</actual_result>
-  <status>pass</status>
-</test_case>
+  <example name="add_test_for_new_feature">
+    <description>Write a new test to cover a recently added feature.</description>
+    <context>After implementing a new function in the codebase.</context>
+    <code language="python"><![CDATA[
+def test_new_feature_behavior():
+    result = new_feature()
+    assert result == expected_output
     ]]></code>
     <explanation>
-      This example shows how to document a manual test case and record its result.
+      Always add or update tests to cover new logic, ensuring it is validated before merging.
+    </explanation>
+  </example>
+  <example name="update_broken_test">
+    <description>Fix a failing test after a code refactor.</description>
+    <context>After refactoring code that causes an existing test to fail.</context>
+    <code language="python"><![CDATA[
+def test_refactored_function():
+    result = refactored_function()
+    assert result == new_expected_output
+    ]]></code>
+    <explanation>
+      Update the test to match the new expected behavior after code changes.
+    </explanation>
+  </example>
+  <example name="mock_external_service">
+    <description>Mock an external API in a test to ensure isolation.</description>
+    <context>When a function under test depends on an external API.</context>
+    <code language="python"><![CDATA[
+from unittest.mock import patch
+
+@patch('services.api_client.get_data')
+def test_service_with_mocked_api(mock_get_data):
+    mock_get_data.return_value = {'key': 'value'}
+    result = my_service_function()
+    assert result == expected_result
+    ]]></code>
+    <explanation>
+      Use mocking to isolate the unit under test and avoid flaky tests due to external dependencies.
     </explanation>
   </example>
 </examples>
