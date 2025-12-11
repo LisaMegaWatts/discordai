@@ -95,47 +95,67 @@ async def create_scheduled_task(user_id, task_name, run_at):
     Creates a ScheduledTask in its own async session context.
     """
     from db import AsyncSessionLocal
-    async with AsyncSessionLocal() as session:
-        st = ScheduledTask(user_id=user_id, task_name=task_name, run_at=run_at)
-        session.add(st)
-        await session.commit()
-        await session.refresh(st)
-        return st
+    try:
+        async with AsyncSessionLocal() as session:
+            st = ScheduledTask(user_id=user_id, task_name=task_name, run_at=run_at)
+            session.add(st)
+            await session.commit()
+            await session.refresh(st)
+            return st
+    except (RuntimeError, AttributeError) as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Skipping DB operation in create_scheduled_task: {e}")
+        return None
 
 async def get_scheduled_task(st_id):
     """
     Retrieves a ScheduledTask in its own async session context.
     """
     from db import AsyncSessionLocal
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(select(ScheduledTask).where(ScheduledTask.id == st_id))
-        return result.scalar_one_or_none()
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(ScheduledTask).where(ScheduledTask.id == st_id))
+            return result.scalar_one_or_none()
+    except (RuntimeError, AttributeError) as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Skipping DB operation in get_scheduled_task: {e}")
+        return None
 
 async def update_scheduled_task(st_id, **kwargs):
     """
     Updates a ScheduledTask in its own async session context.
     """
     from db import AsyncSessionLocal
-    async with AsyncSessionLocal() as session:
-        st = await get_scheduled_task(st_id)
-        if st:
-            for key, value in kwargs.items():
-                setattr(st, key, value)
-            await session.commit()
-            await session.refresh(st)
-        return st
+    try:
+        async with AsyncSessionLocal() as session:
+            st = await get_scheduled_task(st_id)
+            if st:
+                for key, value in kwargs.items():
+                    setattr(st, key, value)
+                await session.commit()
+                await session.refresh(st)
+            return st
+    except (RuntimeError, AttributeError) as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Skipping DB operation in update_scheduled_task: {e}")
+        return None
 
 async def delete_scheduled_task(st_id):
     """
     Deletes a ScheduledTask in its own async session context.
     """
     from db import AsyncSessionLocal
-    async with AsyncSessionLocal() as session:
-        st = await get_scheduled_task(st_id)
-        if st:
-            await session.delete(st)
-            await session.commit()
-        return st
+    try:
+        async with AsyncSessionLocal() as session:
+            st = await get_scheduled_task(st_id)
+            if st:
+                await session.delete(st)
+                await session.commit()
+            return st
+    except (RuntimeError, AttributeError) as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Skipping DB operation in delete_scheduled_task: {e}")
+        return None
 
 # ReflectionLog CRUD
 async def create_reflection_log(user_id, content):

@@ -20,24 +20,31 @@ class RedisClient:
         self.url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
         self.enabled = redis is not None
         self.client = None
-        if self.enabled:
+        self._connection_tested = False
+
+    async def initialize(self):
+        """Async initialization for Redis connection and ping test."""
+        if self.enabled and self.client is None:
             try:
                 self.client = redis.from_url(self.url, decode_responses=True)
-                # Test connection immediately
-                async def ping():
-                    return await self.client.ping()
-                loop = asyncio.get_event_loop()
-                loop.run_until_complete(ping())
+                await self.client.ping()
+                self._connection_tested = True
             except Exception as e:
-                logger.error(f"Redis connection failed: {e}")
+                logger.error(f"Redis connection failed during async init: {e}")
                 self.enabled = False
                 self.client = None
+                self._connection_tested = False
 
     async def _retry(self, coro, *args, fallback=None, **kwargs):
         for attempt in range(1, REDIS_MAX_RETRIES + 1):
             try:
                 if self.client is None:
                     raise ConnectionError("Redis client is None")
+                # Ensure connection is tested before any operation
+                if hasattr(self, "initialize") and not getattr(self, "_connection_tested", False):
+                    await self.initialize()
+                    if not self.enabled or self.client is None:
+                        raise ConnectionError("Redis client failed async initialization")
                 return await coro(*args, **kwargs)
             except Exception as e:
                 RedisAlertState.consecutive_failures += 1
@@ -50,9 +57,17 @@ class RedisClient:
             logger.warning("Falling back to DB logic due to Redis failure.")
             # Support async fallback
             if asyncio.iscoroutinefunction(fallback):
-                return await fallback()
+                try:
+                    return await fallback()
+                except Exception as fallback_e:
+                    logger.error(f"Fallback coroutine failed: {fallback_e}")
+                    return None
             else:
-                return fallback()
+                try:
+                    return fallback()
+                except Exception as fallback_e:
+                    logger.error(f"Fallback function failed: {fallback_e}")
+                    return None
         return None
 
     async def set_if_not_exists(self, key, value, expire_seconds=3600):

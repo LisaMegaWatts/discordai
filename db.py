@@ -31,3 +31,8 @@ async def get_async_session():
 
 Base = declarative_base()
 __all__ = ["engine", "AsyncSessionLocal", "Base"]
+
+# Proper shutdown for async engine
+async def shutdown_async_db():
+    # Dispose engine before event loop termination
+    await engine.dispose()

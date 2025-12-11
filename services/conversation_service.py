@@ -38,46 +38,72 @@ logger = logging.getLogger(__name__)
 class ConversationContextManager:
     """
     Manages conversation sessions and context for Claude interactions.
-    
-    This class handles:
-    - Creating and retrieving conversation sessions
-    - Storing messages in conversation history
-    - Retrieving conversation context for Claude
-    - Managing session timeouts
-    - Formatting messages for Claude API
+    Implements persistent memory architecture: session state and message history
+    are stored in Redis for speed and in the database for durability.
+    Robust recovery logic ensures context is restored after bot restarts or Redis flushes.
     """
-    
     def __init__(self, db_session_factory, redis_client=None):
-        """
-        Initialize the conversation context manager.
-        Stores a db_session_factory for session creation.
-        Optionally accepts a redis_client for session state.
-        """
         self.db_session_factory = db_session_factory
-        self.max_context_messages = 20  # From architecture
+        self.max_context_messages = 20
         self.session_timeout_minutes = 30
         self.redis_client = redis_client
-    
+
+    async def recover_redis_state(self):
+        """
+        On bot restart or Redis flush, rehydrate Redis with active sessions and recent message history from DB.
+        """
+        try:
+            from crud import get_all_active_sessions, get_conversation_history
+            if not self.redis_client:
+                return
+            active_sessions = await get_all_active_sessions()
+            for session in active_sessions:
+                redis_key = f"session:active:{session.user_id}"
+                await self.redis_client.set(redis_key, session.id, expire_seconds=self.session_timeout_minutes*60)
+                # Optionally cache last N messages for each session
+                messages = await get_conversation_history(session.id, limit=self.max_context_messages)
+                msg_key = f"session:messages:{session.id}"
+                msg_data = [
+                    {
+                        "id": msg.id,
+                        "role": msg.role,
+                        "content": msg.message,
+                        "intent": msg.intent,
+                        "confidence": msg.confidence,
+                        "created_at": msg.created_at.isoformat() if msg.created_at else None
+                    }
+                    for msg in messages
+                ]
+                await self.redis_client.set(msg_key, str(msg_data), expire_seconds=self.session_timeout_minutes*60)
+            logger.info("Redis state recovered from DB.")
+        except Exception as e:
+            logger.error(f"Error recovering Redis state: {e}", exc_info=True)
+
     async def get_or_create_session(self, user_id: str):
         """
         Get active session for user or create a new one if expired/missing.
-        Uses a single session per request/task.
-        Uses Redis for atomic session validity.
+        Uses Redis for atomic session validity and fast lookup.
+        Always persists session state to DB for durability.
+        Recovers from DB if Redis is unavailable or flushed.
         """
+        from discord_bot import is_shutting_down
+        if is_shutting_down():
+            logger.warning(f"Shutdown in progress. Skipping get_or_create_session for user {user_id}.")
+            return None
         redis_key = f"session:active:{user_id}"
-        # Check Redis for valid session
+        session_id = None
+        session_obj = None
+        # Try Redis first
         if self.redis_client:
             session_id = await self.redis_client.get(redis_key)
             if session_id:
-                # Check DB for session status
                 session_obj = await get_conversation_session(session_id)
                 if session_obj and getattr(session_obj, "status", None) == "active":
                     logger.info(f"Retrieved active session {session_id} for user {user_id} (Redis)")
                     return session_obj
                 else:
-                    # Remove invalid session from Redis
                     await self.redis_client.delete(redis_key)
-        # Fallback to DB logic
+        # Fallback to DB
         try:
             active_session = await get_active_session_for_user(user_id)
         except Exception as e:
@@ -87,7 +113,6 @@ class ConversationContextManager:
             try:
                 if not await self.should_create_new_session(user_id):
                     logger.info(f"Retrieved active session {active_session.id} for user {user_id}")
-                    # Store in Redis for future atomic checks
                     if self.redis_client:
                         await self.redis_client.set(redis_key, active_session.id, expire_seconds=self.session_timeout_minutes*60)
                     return active_session
@@ -106,13 +131,11 @@ class ConversationContextManager:
             try:
                 new_session = await create_conversation_session(user_id)
                 logger.info(f"Created new session {new_session.id} for user {user_id}")
-                # Store new session in Redis
                 if self.redis_client:
                     await self.redis_client.set(redis_key, new_session.id, expire_seconds=self.session_timeout_minutes*60)
                 return new_session
             except IntegrityError:
                 logger.warning(f"Session race detected for user {user_id}, retrying ({attempt+1}/{max_attempts})")
-                # Another process likely created the session, fetch it
                 active_session = await get_active_session_for_user(user_id)
                 if active_session:
                     logger.info(f"Fetched concurrent active session {active_session.id} for user {user_id}")
@@ -124,7 +147,7 @@ class ConversationContextManager:
                 if attempt == max_attempts - 1:
                     raise
         raise RuntimeError("Failed to create or fetch session atomically")
-    
+
     async def add_message(
         self,
         session_id: str,
@@ -135,21 +158,27 @@ class ConversationContextManager:
         confidence: Optional[float] = None
     ) -> None:
         """
-        Store a message in conversation history and update session activity.
-        Each async task/coroutine creates its own AsyncSession.
-        Uses Redis to check session validity before processing.
+        Store a message in both Redis (for speed) and DB (for durability).
+        Robustly recovers if Redis is unavailable or flushed.
         """
+        from discord_bot import is_shutting_down
+        if is_shutting_down():
+            logger.warning(f"Shutdown in progress. Skipping add_message for user {user_id}.")
+            return
         if role not in ["user", "assistant"]:
             raise ValueError(f"Invalid role: {role}. Must be 'user' or 'assistant'")
-        # Atomic session validity check
         redis_key = f"session:active:{user_id}"
+        msg_key = f"session:messages:{session_id}"
+        # Check Redis session validity
+        redis_valid = True
         if self.redis_client:
             session_id_redis = await self.redis_client.get(redis_key)
             if session_id_redis != session_id:
                 logger.warning(
                     f"Session {session_id} not valid for user {user_id} (Redis check failed). Skipping operation."
                 )
-                return
+                redis_valid = False
+        # Always persist to DB
         try:
             session_obj = await get_conversation_session(session_id)
         except Exception as e:
@@ -159,11 +188,9 @@ class ConversationContextManager:
             logger.warning(
                 f"Attempted to add message to closed or invalid session {session_id} (user {user_id}). Skipping operation."
             )
-            # Remove invalid session from Redis
             if self.redis_client:
                 await self.redis_client.delete(redis_key)
             return
-        # DB fallback: ensure atomic message creation only if session is still active
         from sqlalchemy.exc import IntegrityError
         try:
             session_obj = await get_conversation_session(session_id)
@@ -186,9 +213,33 @@ class ConversationContextManager:
         except Exception as e:
             logger.error(f"Error creating conversation message for session {session_id}, user {user_id}: {e}", exc_info=True)
             return
+        # Update Redis message cache (if enabled and session valid)
+        if self.redis_client and redis_valid:
+            try:
+                # Get current cached messages
+                cached = await self.redis_client.get(msg_key)
+                import ast
+                if cached:
+                    cached_msgs = ast.literal_eval(cached)
+                else:
+                    cached_msgs = []
+                # Append new message
+                cached_msgs.append({
+                    "id": None,  # Will be set by DB, but cache for context
+                    "role": role,
+                    "content": message,
+                    "intent": intent,
+                    "confidence": confidence,
+                    "created_at": datetime.now(timezone.utc).isoformat()
+                })
+                # Trim to max_context_messages
+                if len(cached_msgs) > self.max_context_messages:
+                    cached_msgs = cached_msgs[-self.max_context_messages:]
+                await self.redis_client.set(msg_key, str(cached_msgs), expire_seconds=self.session_timeout_minutes*60)
+            except Exception as e:
+                logger.error(f"Error updating Redis message cache for session {session_id}: {e}", exc_info=True)
         try:
             await update_session_activity(session_id, message_count_increment=1)
-            # Refresh session expiry in Redis
             if self.redis_client:
                 await self.redis_client.set(redis_key, session_id, expire_seconds=self.session_timeout_minutes*60)
         except Exception as e:
@@ -402,7 +453,7 @@ class ConversationContextManager:
             session = await get_conversation_session(session_id)
 
             if not session:
-                logger.warning(f"Session {session_id} not found")
+                logger.warning(f"Session {session_id} not found (NoneType). Skipping summary operations.")
                 return {
                     "total_messages": 0,
                     "last_messages": [],
@@ -411,29 +462,36 @@ class ConversationContextManager:
                     "assistant_message_count": 0
                 }
 
+            # Defensive: check for required session attributes
+            started_at = getattr(session, "started_at", None)
+            if started_at is None:
+                logger.warning(f"Session {session_id} missing 'started_at'. Skipping duration calculation.")
+                duration_minutes = 0
+            else:
+                now = datetime.now(timezone.utc)
+                if started_at.tzinfo is None:
+                    started_at = started_at.replace(tzinfo=timezone.utc)
+                duration = now - started_at
+                duration_minutes = duration.total_seconds() / 60
+
             # Get all messages for counting
-            all_messages = await self.get_conversation_context(session_id, max_messages=1000)
+            try:
+                all_messages = await self.get_conversation_context(session_id, max_messages=1000)
+            except Exception as e:
+                logger.warning(f"Could not retrieve messages for session {session_id}: {e}")
+                all_messages = []
 
             # Get last 5 messages
             last_messages = all_messages[-5:] if len(all_messages) > 5 else all_messages
 
             # Count message types
-            user_count = sum(1 for msg in all_messages if msg["role"] == "user")
-            assistant_count = sum(1 for msg in all_messages if msg["role"] == "assistant")
-
-            # Calculate session duration
-            now = datetime.now(timezone.utc)
-            started_at = session.started_at
-            if started_at.tzinfo is None:
-                started_at = started_at.replace(tzinfo=timezone.utc)
-
-            duration = now - started_at
-            duration_minutes = duration.total_seconds() / 60
+            user_count = sum(1 for msg in all_messages if msg.get("role") == "user")
+            assistant_count = sum(1 for msg in all_messages if msg.get("role") == "assistant")
 
             return {
                 "total_messages": len(all_messages),
                 "last_messages": last_messages,
-                "session_duration_minutes": round(duration_minutes, 2),
+                "session_duration_minutes": round(duration_minutes, 2) if started_at else 0,
                 "user_message_count": user_count,
                 "assistant_message_count": assistant_count
             }

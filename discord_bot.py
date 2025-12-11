@@ -66,6 +66,8 @@ scheduler = AsyncIOScheduler()
 # Track background tasks for explicit shutdown
 background_tasks = set()
 shutdown_event = asyncio.Event()
+def is_shutting_down():
+    return shutdown_event.is_set()
 
 # Centralized deduplication using Redis
 from services.redis_utils import RedisClient
@@ -171,6 +173,9 @@ async def on_message(message):
         acquired = True
 
     try:
+        if is_shutting_down():
+            print("[DIAG] Shutdown in progress. Skipping message processing.")
+            return
         if message.channel is not None and is_event_loop_running():
             async with message.channel.typing():
                 response_text = await process_conversational_message(message)
