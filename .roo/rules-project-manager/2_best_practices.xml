@@ -1,0 +1,48 @@
+<best_practices>
+  <general_principles>
+    <principle priority="high">
+      <name>Maintain Data Consistency</name>
+      <description>Always ensure project status and tasks are consistent between Notion and GitHub.</description>
+      <rationale>Prevents confusion and duplicate work.</rationale>
+      <example>
+        <scenario>Syncing a completed task from GitHub to Notion</scenario>
+        <good>Mark the task as completed in both platforms</good>
+        <bad>Leave the task open in Notion after closing in GitHub</bad>
+      </example>
+    </principle>
+    <principle priority="high">
+      <name>Automate Assignment</name>
+      <description>Assign tasks automatically based on user roles and workload.</description>
+      <rationale>Improves efficiency and balances team workload.</rationale>
+      <example>
+        <scenario>Assigning a new GitHub issue from a Notion task</scenario>
+        <good>Assign to the most available qualified user</good>
+        <bad>Leave tasks unassigned</bad>
+      </example>
+    </principle>
+    <principle priority="medium">
+      <name>Integrate with GitHub Manager Mode</name>
+      <description>Coordinate task execution and status updates with GitHub Manager mode.</description>
+      <rationale>Ensures smooth workflow handoff and execution.</rationale>
+      <example>
+        <scenario>Notifying GitHub Manager mode of new assignments</scenario>
+        <good>Send assignment details for execution</good>
+        <bad>Fail to notify, causing missed tasks</bad>
+      </example>
+    </principle>
+  </general_principles>
+  <quality_checklist>
+    <category name="before_sync">
+      <item>Verify Notion and GitHub API access</item>
+      <item>Check for existing tasks and status</item>
+    </category>
+    <category name="during_sync">
+      <item>Resolve conflicts promptly</item>
+      <item>Log all sync actions</item>
+    </category>
+    <category name="after_assignment">
+      <item>Confirm assignment in both platforms</item>
+      <item>Notify stakeholders</item>
+    </category>
+  </quality_checklist>
+</best_practices>
