@@ -21,14 +21,17 @@ class RedisClient:
         self.enabled = redis is not None
         self.client = None
         self._connection_tested = False
+        logger.debug(f"[RedisClient.__init__] enabled={self.enabled}, url={self.url}")
 
     async def initialize(self):
         """Async initialization for Redis connection and ping test."""
+        logger.debug("[RedisClient.initialize] Called")
         if self.enabled and self.client is None:
             try:
                 self.client = redis.from_url(self.url, decode_responses=True)
                 await self.client.ping()
                 self._connection_tested = True
+                logger.info("[RedisClient.initialize] Redis client initialized and ping successful")
             except Exception as e:
                 logger.error(f"Redis connection failed during async init: {e}")
                 self.enabled = False
@@ -36,7 +39,16 @@ class RedisClient:
                 self._connection_tested = False
 
     async def _retry(self, coro, *args, fallback=None, **kwargs):
+        import asyncio
+        def is_event_loop_closed():
+            try:
+                loop = asyncio.get_running_loop()
+                return loop.is_closed()
+            except RuntimeError:
+                return True
         for attempt in range(1, REDIS_MAX_RETRIES + 1):
+            if is_event_loop_closed():
+                logger.error("[DIAG] Attempted Redis operation after event loop closed.")
             try:
                 if self.client is None:
                     raise ConnectionError("Redis client is None")
@@ -74,6 +86,8 @@ class RedisClient:
         if not self.enabled:
             # Fallback: always return True (simulate atomic set)
             return True
+        if self.client is None:
+            logger.error(f"[RedisClient.set_if_not_exists] self.client is None for key={key}")
         def fallback():
             # Fallback: always return True (simulate atomic set)
             return True

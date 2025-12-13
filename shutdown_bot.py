@@ -5,7 +5,8 @@ import logging
 import sys
 
 from discord_bot import bot  # Assumes bot is imported from discord_bot.py
-from db import engine, AsyncSessionLocal  # Correct import from db.py
+import db  # Import db module to allow global reference cleanup
+from db import db_registry
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,7 +27,8 @@ async def shutdown_discord_bot():
 
 async def cancel_background_tasks():
     logger.info("Cancelling all background tasks...")
-    tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    # Only cancel tasks that are not done and not the current task
+    tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task() and not t.done()]
     for task in tasks:
         task.cancel()
     try:
@@ -37,47 +39,102 @@ async def cancel_background_tasks():
     logger.info("All background tasks cancelled.")
 
 async def dispose_db():
-    logger.info("Disposing SQLAlchemy engine and closing AsyncSession objects...")
+    logger.info("Disposing SQLAlchemy engine and cleaning up AsyncSession objects...")
 
-    # Await and close AsyncSession objects
-    try:
-        # Close AsyncSessionLocal if needed (sessionmaker does not need closing, but included for symmetry)
-        if AsyncSessionLocal:
-            logger.info("AsyncSessionLocal is a factory, no session to close directly.")
-    except Exception as e:
-        logger.error(f"Error closing AsyncSession: {e}")
+    # Check if event loop is closed before proceeding
+    import asyncio
+    def is_event_loop_closed():
+        try:
+            loop = asyncio.get_running_loop()
+            return loop.is_closed()
+        except RuntimeError:
+            return True
 
-    # Dispose and dereference engine
+    if is_event_loop_closed():
+        logger.warning("[DIAG] Attempted DB engine dispose after event loop closed. Skipping DB cleanup.")
+        return
+
+    # Defensive: Await and close all AsyncSession objects before disposing engine
+    import gc
+    session_objs = []
+    for obj in gc.get_objects():
+        try:
+            if type(obj).__name__ == "AsyncSession":
+                session_objs.append(obj)
+        except Exception:
+            continue
+    if session_objs:
+        logger.info(f"Closing {len(session_objs)} AsyncSession objects before engine disposal...")
+        close_tasks = []
+        for session in session_objs:
+            try:
+                close_tasks.append(session.close())
+            except Exception as e:
+                logger.warning(f"Error closing AsyncSession: {e}")
+        if close_tasks:
+            try:
+                await asyncio.gather(*close_tasks, return_exceptions=True)
+                logger.info("AsyncSession objects closed and awaited successfully.")
+            except Exception as e:
+                logger.warning(f"Exception during AsyncSession close: {e}")
+
+    # Properly dispose engine and clean up global references
     try:
-        if engine:
-            await engine.dispose()
-            logger.info("AsyncEngine disposed and dereferenced.")
-            del engine
+        if getattr(db, "engine", None):
+            await db.engine.dispose()
+            logger.info("AsyncEngine disposed.")
+            db.engine = None
     except Exception as e:
         logger.error(f"Error disposing engine: {e}")
 
+    # Remove AsyncSessionLocal global reference
+    try:
+        if hasattr(db, "AsyncSessionLocal"):
+            db.AsyncSessionLocal = None
+            logger.info("AsyncSessionLocal dereferenced.")
+    except Exception as e:
+        logger.error(f"Error dereferencing AsyncSessionLocal: {e}")
+
     # Final cleanup: Remove lingering AsyncEngine references
-    import gc
+    import sys, ctypes
     gc.collect()
     logger.info("Garbage collection complete. Checking for lingering AsyncEngine/AsyncSession objects...")
 
-    # Confirm no lingering AsyncEngine/AsyncSession objects
-    import inspect
     found_engines = []
     found_sessions = []
+    engine_ids = []
+    session_ids = []
+
     for obj in gc.get_objects():
         try:
             if obj.__class__.__name__ == "AsyncEngine":
                 found_engines.append(obj)
+                engine_ids.append(id(obj))
             if obj.__class__.__name__ == "AsyncSession":
                 found_sessions.append(obj)
+                session_ids.append(id(obj))
         except Exception:
             continue
+
+    logger.info(f"AsyncEngine object IDs: {engine_ids}")
+    logger.info(f"AsyncSession object IDs: {session_ids}")
+
+    # Print reference counts for diagnostic purposes
+    for eid in engine_ids:
+        try:
+            logger.info(f"Refcount for AsyncEngine id={eid}: {sys.getrefcount(ctypes.cast(eid, ctypes.py_object)) if hasattr(sys, 'getrefcount') else 'N/A'}")
+        except Exception as e:
+            logger.info(f"Error getting refcount for AsyncEngine id={eid}: {e}")
+    for sid in session_ids:
+        try:
+            logger.info(f"Refcount for AsyncSession id={sid}: {sys.getrefcount(ctypes.cast(sid, ctypes.py_object)) if hasattr(sys, 'getrefcount') else 'N/A'}")
+        except Exception as e:
+            logger.info(f"Error getting refcount for AsyncSession id={sid}: {e}")
+
     if not found_engines and not found_sessions:
         logger.info("No lingering AsyncEngine or AsyncSession objects remain.")
     else:
         logger.warning(f"Lingering AsyncEngine objects: {len(found_engines)}; AsyncSession objects: {len(found_sessions)}")
-
 async def main():
     logger.info("Shutdown sequence initiated.")
     try:
@@ -99,7 +156,17 @@ async def main():
     sys.exit(0)
 
 if __name__ == "__main__":
-    # Suppress RuntimeWarnings for unawaited coroutines by ensuring all are awaited
+    # Suppress RuntimeWarnings for unawaited coroutines and AttributeError during shutdown
     import warnings
     warnings.filterwarnings("ignore", category=RuntimeWarning)
-    asyncio.run(main())
+    warnings.filterwarnings("ignore", category=UserWarning)
+    try:
+        import asyncio
+        asyncio.run(main())
+    except AttributeError as e:
+        # Suppress attribute errors that may occur if references are cleaned up during shutdown
+        import sys
+        print(f"[SHUTDOWN] AttributeError suppressed during shutdown: {e}", file=sys.stderr)
+    except Exception as e:
+        import sys
+        print(f"[SHUTDOWN] Exception during shutdown: {e}", file=sys.stderr)

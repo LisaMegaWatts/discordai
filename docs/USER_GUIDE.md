@@ -101,6 +101,17 @@ The bot remembers context for **30 minutes** of inactivity, then starts a fresh 
 
 **What it does**: Creates AI-generated images based on your description
 
+---
+
+#### ⚠️ Image Generation Update (v2.1)
+
+- **Root Cause:** Previous failures were due to using the wrong API endpoint and payload.
+- **Solution:** The bot now uses the `/v1/images/generations` endpoint with a payload containing both `model` and `prompt`.
+- **Model:** The default image model is now `amazon/nova-2-lite-v1:free`.
+- **Testing:** When writing tests for image generation, ensure you use proper async HTTP mocking to simulate API responses.
+
+---
+
 **Natural Language Examples**:
 ```
 "Create an image of a sunset over the ocean"

@@ -3,9 +3,20 @@ import asyncio
 def is_event_loop_running():
     try:
         loop = asyncio.get_running_loop()
-        return not loop.is_closed()
+        running = not loop.is_closed()
+        print(f"[DIAG] is_event_loop_running() called: running={running}, loop={loop}, closed={loop.is_closed()}")
+        return running
     except RuntimeError:
+        print("[DIAG] is_event_loop_running() called: no running loop (RuntimeError)")
         return False
+
+def is_engine_disposed():
+    # Defensive check: engine may be deleted or disposed
+    try:
+        import db
+        return getattr(db.engine, "_disposed", False)
+    except Exception:
+        return True
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -34,18 +45,19 @@ from crud import create_intent_log
 load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://user:password@localhost:5432/ai_ide_db")
-from db import AsyncSessionLocal, engine
+import db
+from db import db_registry
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://user:password@localhost:5432/ai_ide_db")
 
 async def init_db():
-    async with engine.begin() as conn:
+    async with db.engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
 # Load Discord token from environment variable or config file
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-OPENROUTER_IMAGE_MODEL = os.getenv("OPENROUTER_IMAGE_MODEL", "stabilityai/stable-diffusion-xl")
+OPENROUTER_IMAGE_MODEL = os.getenv("OPENROUTER_IMAGE_MODEL", "amazon/nova-2-lite-v1:free")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
 
@@ -67,7 +79,9 @@ scheduler = AsyncIOScheduler()
 background_tasks = set()
 shutdown_event = asyncio.Event()
 def is_shutting_down():
-    return shutdown_event.is_set()
+    val = shutdown_event.is_set()
+    print(f"[DIAG] is_shutting_down() called: {val}")
+    return val
 
 # Centralized deduplication using Redis
 from services.redis_utils import RedisClient
@@ -106,6 +120,8 @@ async def setup_scheduler():
 @bot.event
 async def setup_hook():
     """Called when the bot is starting up and the event loop is ready."""
+    # Ensure Redis client is initialized before any Redis operation
+    await redis_client.initialize()
     await setup_scheduler()
     
     # Start cache cleanup background task and track it
@@ -173,30 +189,40 @@ async def on_message(message):
         acquired = True
 
     try:
-        if is_shutting_down():
-            print("[DIAG] Shutdown in progress. Skipping message processing.")
+        if is_shutting_down() or is_engine_disposed():
+            print("[DIAG] Shutdown in progress or engine disposed. Skipping message processing.")
             return
-        if message.channel is not None and is_event_loop_running():
+        if message.channel is not None and is_event_loop_running() and not is_engine_disposed():
             async with message.channel.typing():
                 response_text = await process_conversational_message(message)
-                if response_text and is_event_loop_running():
+                if response_text and is_event_loop_running() and not is_engine_disposed():
                     await message.channel.send(response_text)
         else:
-            print("Error: message.channel is None or event loop is closed. Cannot send response.")
+            print("Error: message.channel is None, event loop is closed, or engine disposed. Cannot send response.")
     except Exception as e:
         print(f"Error processing conversational message: {e}")
+        import traceback
+        traceback.print_exc()
+        print(f"[DIAG] is_event_loop_running={is_event_loop_running()}, is_shutting_down={is_shutting_down()}")
         if message.channel is not None and is_event_loop_running():
             await message.channel.send("I encountered an error processing your message. Please try again or use a slash command.")
         else:
             print("Error: message.channel is None or event loop is closed. Cannot send error message.")
     finally:
         # Remove deduplication key to allow future replies if needed (optional, or let expire)
+        print(f"[DIAG] on_message finally: is_event_loop_running={is_event_loop_running()}, is_shutting_down={is_shutting_down()}")
+        if is_shutting_down():
+            print("[DIAG] on_message: shutdown_event is set, but this handler is still running.")
         if msg_id is not None and acquired:
             await redis_client.delete(f"dedup:msg:{msg_id}")
 
 async def process_conversational_message(message: discord.Message) -> str:
     """Process message through semantic intent detection pipeline with caching and optimizations."""
     try:
+        # Prevent resource access after shutdown, event loop closure, or engine disposal
+        if is_shutting_down() or not is_event_loop_running() or is_engine_disposed():
+            print("[DIAG] Shutdown, closed event loop, or disposed engine detected in process_conversational_message. Aborting.")
+            return "Bot is shutting down or unavailable. Please try again later."
         user_id = str(message.author.id)
         message_text = message.content
         
@@ -210,7 +236,7 @@ async def process_conversational_message(message: discord.Message) -> str:
             return cached_response
         
         # Initialize services with Redis for dedup/session state
-        conversation_manager = ConversationContextManager(AsyncSessionLocal, redis_client=redis_client)
+        conversation_manager = ConversationContextManager(db.AsyncSessionLocal, redis_client=redis_client)
         response_service = ResponseGenerationService(anthropic_client, None)
         
         # Parallel operations: Get session and detect intent concurrently
@@ -331,20 +357,20 @@ async def generate_image_from_prompt(prompt: str, user_id: str, message: discord
         
         payload = {
             "model": OPENROUTER_IMAGE_MODEL,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ]
+            "prompt": prompt
         }
+        print("[DEBUG] OpenRouter payload:", payload)
+        print("[DEBUG] OpenRouter headers:", headers)
         
         response = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
+            "https://openrouter.ai/api/v1/images/generations",
             headers=headers,
             json=payload,
             timeout=60
         )
+        if response.status_code != 200:
+            print("[DEBUG] OpenRouter response status:", response.status_code)
+            print("[DEBUG] OpenRouter response content:", response.text)
         response.raise_for_status()
         
         result = response.json()
@@ -353,38 +379,78 @@ async def generate_image_from_prompt(prompt: str, user_id: str, message: discord
             content = result['choices'][0]['message']['content']
             image_url = content.strip()
         else:
+            if message.channel is not None and is_event_loop_running():
+                await message.channel.send("Error: Unexpected response format from OpenRouter API.")
             return "Error: Unexpected response format from OpenRouter API."
 
         # Download image
         import aiohttp
         import uuid
+        import errno
+
+        try:
+            os.makedirs("generated_images", exist_ok=True)
+        except Exception as e:
+            err_msg = f"Failed to create directory for generated images: {e}"
+            print(err_msg)
+            if message.channel is not None and is_event_loop_running():
+                await message.channel.send(err_msg)
+            return err_msg
+
+        filename = f"{uuid.uuid4().hex}_{int(datetime.datetime.now(datetime.UTC).timestamp())}.png"
+        filepath = os.path.join("generated_images", filename)
 
         async with aiohttp.ClientSession() as session:
             async with session.get(image_url) as resp:
                 if resp.status == 200:
                     img_bytes = await resp.read()
-                    # Save locally
-                    os.makedirs("generated_images", exist_ok=True)
-                    filename = f"{uuid.uuid4().hex}_{int(datetime.datetime.utcnow().timestamp())}.png"
-                    filepath = os.path.join("generated_images", filename)
-                    with open(filepath, "wb") as f:
-                        f.write(img_bytes)
+                    try:
+                        with open(filepath, "wb") as f:
+                            f.write(img_bytes)
+                    except Exception as e:
+                        err_msg = f"Failed to save generated image to disk: {e}"
+                        print(err_msg)
+                        if message.channel is not None and is_event_loop_running():
+                            await message.channel.send(err_msg)
+                        return err_msg
                     # Store metadata in DB
-                    async with AsyncSessionLocal() as db_session:
-                        from crud import create_generated_image
-                        db_image = await create_generated_image(db_session, user_id, filepath, prompt)
-                        if db_image is None:
-                            print(f"Error: Failed to store generated image metadata in DB for user {user_id}, prompt '{prompt}'.")
+                    try:
+                        async with db.AsyncSessionLocal() as db_session:
+                            from crud import create_generated_image
+                            db_image = await create_generated_image(db_session, user_id, filepath, prompt)
+                            if db_image is None:
+                                db_err_msg = f"Error: Failed to store generated image metadata in DB for user {user_id}, prompt '{prompt}'."
+                                print(db_err_msg)
+                                if message.channel is not None and is_event_loop_running():
+                                    await message.channel.send(db_err_msg)
+                    except Exception as e:
+                        db_err_msg = f"Database error while saving generated image metadata: {e}"
+                        print(db_err_msg)
+                        if message.channel is not None and is_event_loop_running():
+                            await message.channel.send(db_err_msg)
                     # Send image to channel
                     if message.channel is not None and is_event_loop_running():
-                        await message.channel.send(file=discord.File(filepath))
+                        try:
+                            await message.channel.send(file=discord.File(filepath))
+                        except Exception as e:
+                            file_send_err = f"Failed to send generated image to Discord: {e}"
+                            print(file_send_err)
+                            await message.channel.send(file_send_err)
                     else:
                         print("Error: message.channel is None or event loop is closed. Cannot send generated image.")
                     return f"I've generated an image for: '{prompt}'"
                 else:
-                    return "Failed to download generated image."
+                    err_msg = "Failed to download generated image."
+                    print(err_msg)
+                    if message.channel is not None and is_event_loop_running():
+                        await message.channel.send(err_msg)
+                    return err_msg
     except Exception as e:
-        return f"Image generation failed: {str(e)}"
+        err_msg = f"Image generation failed: {str(e)}"
+        print(err_msg)
+        if message.channel is not None and is_event_loop_running():
+            await message.channel.send(err_msg)
+        return err_msg
 
 async def submit_feature_from_text(title: str, description: str, user_id: str, message: discord.Message) -> str:
     """Submit feature request from extracted text."""
@@ -393,7 +459,7 @@ async def submit_feature_from_text(title: str, description: str, user_id: str, m
         
         # Store feature request in PostgreSQL
         from crud import create_feature_request
-        async with AsyncSessionLocal() as session:
+        async with db.AsyncSessionLocal() as session:
             fr = await create_feature_request(session, user_id, title, description)
             if fr is None:
                 print(f"Error: Failed to create feature request for user {user_id}, title '{title}'.")
@@ -418,30 +484,48 @@ async def daily_reflection_task():
 
     # Review feature requests (stub: count pending requests)
     from crud import FeatureRequest
-    async with AsyncSessionLocal() as session:
+    async with db.AsyncSessionLocal() as session:
         from sqlalchemy.future import select
         result = await session.execute(select(FeatureRequest).where(FeatureRequest.status == "pending"))
         pending_count = len(result.scalars().all())
     feature_summary = f"{pending_count} pending feature requests."
 
     # Generate summary
-    summary = f"Daily Reflection ({datetime.datetime.utcnow().strftime('%Y-%m-%d')}):\n{migration_summary}\n{feature_summary}"
+    summary = f"Daily Reflection ({datetime.datetime.now(datetime.UTC).strftime('%Y-%m-%d')}):\n{migration_summary}\n{feature_summary}"
 
     # Log to PostgreSQL (ReflectionLog, user_id='system')
     from crud import create_reflection_log
-    async with AsyncSessionLocal() as session:
+    async with db.AsyncSessionLocal() as session:
         result = await create_reflection_log(session, "system", summary)
         if result is None:
             print("Error: Failed to create reflection log in DB for daily reflection.")
 
     # Post to Discord channel (stub: channel_id from env)
-    channel_id = int(os.getenv("REFLECTION_CHANNEL_ID", "0"))
+    # Validate REFLECTION_CHANNEL_ID as integer and surface errors if invalid
+    channel_id_env = os.getenv("REFLECTION_CHANNEL_ID", "0")
+    try:
+        channel_id = int(channel_id_env)
+    except Exception as e:
+        err_msg = f"REFLECTION_CHANNEL_ID is invalid: '{channel_id_env}'. Error: {e}"
+        print(err_msg)
+        # Attempt to notify admins via all available guilds
+        for guild in bot.guilds:
+            admin_channel = discord.utils.get(guild.text_channels, name="admin-log")
+            if admin_channel is not None and is_event_loop_running():
+                await admin_channel.send(err_msg)
+        return
     if channel_id:
         channel = bot.get_channel(channel_id)
         if channel is not None:
             await channel.send(summary)
         else:
-            print(f"Error: Could not find channel with id {channel_id}. Cannot send summary.")
+            err_msg = f"Error: Could not find channel with id {channel_id}. Cannot send summary."
+            print(err_msg)
+            # Attempt to notify admins via all available guilds
+            for guild in bot.guilds:
+                admin_channel = discord.utils.get(guild.text_channels, name="admin-log")
+                if admin_channel is not None and is_event_loop_running():
+                    await admin_channel.send(err_msg)
 
 @bot.command(name="request-feature")
 async def request_feature(ctx):
@@ -509,20 +593,20 @@ async def generate_image(ctx, *, prompt: str = None):
             
             payload = {
                 "model": OPENROUTER_IMAGE_MODEL,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ]
+                "prompt": prompt
             }
+            print("[DEBUG] OpenRouter payload:", payload)
+            print("[DEBUG] OpenRouter headers:", headers)
             
             response = requests.post(
-                "https://openrouter.ai/api/v1/chat/completions",
+                "https://openrouter.ai/api/v1/images/generations",
                 headers=headers,
                 json=payload,
                 timeout=60
             )
+            if response.status_code != 200:
+                print("[DEBUG] OpenRouter response status:", response.status_code)
+                print("[DEBUG] OpenRouter response content:", response.text)
             response.raise_for_status()
             
             result = response.json()
@@ -553,7 +637,7 @@ async def generate_image(ctx, *, prompt: str = None):
                         with open(filepath, "wb") as f:
                             f.write(img_bytes)
                         # Store metadata in DB
-                        async with AsyncSessionLocal() as db_session:
+                        async with db.AsyncSessionLocal() as db_session:
                             from crud import create_generated_image
                             user_id = str(ctx.author.id)
                             db_image = await create_generated_image(db_session, user_id, filepath, prompt)
@@ -573,7 +657,7 @@ async def generate_image(ctx, *, prompt: str = None):
 @bot.command(name="get-image")
 async def get_image(ctx, image_id: int = None):
     """Retrieve a generated image by ID or latest for the user."""
-    async with AsyncSessionLocal() as db_session:
+    async with db.AsyncSessionLocal() as db_session:
         from crud import get_generated_image
         user_id = str(ctx.author.id)
         if image_id:
@@ -749,9 +833,15 @@ if __name__ == "__main__":
         orig_close = bot.close
         async def safe_close():
             print("[SHUTDOWN] Initiating shutdown sequence...")
-            shutdown_event.set()
-            # Cancel all background tasks
+            print(f"[DIAG] [SHUTDOWN] safe_close() called at {datetime.datetime.utcnow().isoformat()} (shutdown_event.is_set={shutdown_event.is_set()})")
+            # Do not set shutdown_event until all resources are cleaned up
+
+            # Cancel all background tasks first
             print(f"[SHUTDOWN] Cancelling {len(background_tasks)} background tasks...")
+            running_tasks = [t for t in asyncio.all_tasks() if not t.done()]
+            print(f"[DIAG] Tasks running at shutdown_event.set(): {len(running_tasks)}")
+            for t in running_tasks:
+                print(f"[DIAG] Task at shutdown start: {t}, coro={getattr(t, '_coro', None)}")
             for task in list(background_tasks):
                 if not task.done():
                     print(f"[SHUTDOWN] Cancelling background task: {task}")
@@ -761,19 +851,22 @@ if __name__ == "__main__":
                 print("[DIAG] Background tasks cancelled and awaited successfully.")
             except Exception as e:
                 print(f"[DIAG] Exception during background task cancellation: {e}")
-            
+
             # Log pending asyncio tasks/coroutines before engine disposal
             pending_tasks = [t for t in asyncio.all_tasks() if not t.done()]
             print(f"[SHUTDOWN] Pending asyncio tasks before engine disposal: {len(pending_tasks)}")
             for t in pending_tasks:
                 print(f"[SHUTDOWN] Pending task: {t}")
-            
-            # Explicitly close/await all AsyncSession objects before engine disposal
+
+            # Defensive: Await and close all AsyncSession objects before disposing engine
             import gc
             session_objs = []
             for obj in gc.get_objects():
-                if type(obj).__name__ == "AsyncSession":
-                    session_objs.append(obj)
+                try:
+                    if type(obj).__name__ == "AsyncSession":
+                        session_objs.append(obj)
+                except Exception:
+                    continue
             if session_objs:
                 print(f"[SHUTDOWN] Closing {len(session_objs)} AsyncSession objects before engine disposal...")
                 close_tasks = []
@@ -790,7 +883,7 @@ if __name__ == "__main__":
                     except Exception as e:
                         print(f"[DIAG] Exception during AsyncSession close: {e}")
                 print("[SHUTDOWN] All AsyncSession objects closed and awaited.")
-            
+
             # Wait for all DB-related tasks to finish before disposing engine
             db_tasks = [t for t in pending_tasks if hasattr(t, "_coro") and "sqlalchemy" in str(t._coro)]
             if db_tasks:
@@ -801,25 +894,35 @@ if __name__ == "__main__":
                 except Exception as e:
                     print(f"[DIAG] Exception during DB task await: {e}")
                 print("[SHUTDOWN] All DB tasks awaited.")
-            
-            # Dispose SQLAlchemy engine before closing event loop
+
+            # Dispose SQLAlchemy engine before closing event loop, with event loop closed check
             try:
-                print("[SHUTDOWN] Disposing SQLAlchemy engine before shutdown...")
-                await engine.dispose()
-                print("[SHUTDOWN] Engine disposed successfully.")
+                import asyncio
+                def is_event_loop_closed():
+                    try:
+                        loop = asyncio.get_running_loop()
+                        return loop.is_closed()
+                    except RuntimeError:
+                        return True
+                if is_event_loop_closed():
+                    print("[SHUTDOWN] Attempted DB engine dispose after event loop closed. Skipping DB cleanup.")
+                else:
+                    print("[SHUTDOWN] Disposing SQLAlchemy engine before shutdown...")
+                    await db.engine.dispose()
+                    print("[SHUTDOWN] Engine disposed successfully.")
             except Exception as e:
                 print(f"[SHUTDOWN] Error disposing engine: {e}")
-            
+
             # Explicitly delete references and run garbage collection
             try:
                 print("[SHUTDOWN] Deleting references to AsyncSession/engine...")
                 for session in session_objs:
                     del session
                 del session_objs
-                del engine
+                del db.engine
             except Exception as e:
                 print(f"[SHUTDOWN] Error deleting references: {e}")
-            
+
             gc.collect()
             print("[SHUTDOWN] Garbage collected. Checking for lingering AsyncSession/engine references...")
             lingering_sessions = 0
@@ -832,8 +935,9 @@ if __name__ == "__main__":
                     print(f"[WARNING] Lingering AsyncEngine detected after shutdown: {obj}")
                     lingering_engines += 1
             print(f"[SHUTDOWN] Lingering AsyncSession objects: {lingering_sessions}, AsyncEngine objects: {lingering_engines}")
-            
-            print("[SHUTDOWN] Shutdown sequence complete. Closing bot...")
+
+            print("[SHUTDOWN] Shutdown sequence complete. Setting shutdown_event and closing bot...")
+            shutdown_event.set()
             try:
                 await orig_close()
                 print("[DIAG] orig_close() completed without event loop error.")

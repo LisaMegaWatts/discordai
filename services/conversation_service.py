@@ -86,9 +86,9 @@ class ConversationContextManager:
         Always persists session state to DB for durability.
         Recovers from DB if Redis is unavailable or flushed.
         """
-        from discord_bot import is_shutting_down
-        if is_shutting_down():
-            logger.warning(f"Shutdown in progress. Skipping get_or_create_session for user {user_id}.")
+        from discord_bot import is_shutting_down, is_event_loop_running
+        if is_shutting_down() or not is_event_loop_running():
+            logger.warning(f"Shutdown or closed event loop. Skipping get_or_create_session for user {user_id}.")
             return None
         redis_key = f"session:active:{user_id}"
         session_id = None

@@ -39,6 +39,17 @@ No more memorizing command syntax! Just talk to the bot like you would to a pers
 | **General Conversation** | Natural chat interaction | "hello!", "thanks!" |
 | **Action Query** | Retrieve previous results | "show me my last image" |
 
+---
+
+#### ⚠️ Image Generation API Update (v2.1)
+
+- **Root Cause:** Previous image generation failed due to using the wrong API endpoint and payload format.
+- **Solution:** The bot now uses the correct OpenRouter endpoint: `/v1/images/generations` with a payload including both `model` and `prompt`.
+- **Model Update:** The default image model is now `amazon/nova-2-lite-v1:free`.
+- **Testing Note:** Proper async HTTP mocking is required in tests to ensure reliable image generation test coverage.
+
+See the [User Guide](docs/USER_GUIDE.md#image-generation-update) for details.
+
 ### Natural Language Examples
 
 ```

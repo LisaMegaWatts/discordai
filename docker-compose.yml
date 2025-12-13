@@ -42,6 +42,16 @@ services:
     networks:
       - ai_ide_network
 
+  # Redis service for caching and deduplication
+  redis:
+    image: redis:7-alpine
+    container_name: ai_ide_redis
+    ports:
+      - "6379:6379"
+    networks:
+      - ai_ide_network
+    restart: unless-stopped
+
 # Named volumes definition
 # This volume persists database data across container restarts
 volumes:

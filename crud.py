@@ -1,35 +1,56 @@
 import asyncio
+import logging
+from typing import Optional
+
+from db import AsyncSessionLocal
+from models import (
+    FeatureRequest, GeneratedImage, ScheduledTask, ReflectionLog,
+    ConversationSessions, ConversationHistory, UserPreferences, IntentLogs, DocumentBlob
+)
+from sqlalchemy.future import select
+from sqlalchemy import func
+import uuid
+
 
 # Utility to check if event loop is running and not closed
 def is_event_loop_running():
+    """Check if event loop is running and not closed."""
     try:
         loop = asyncio.get_running_loop()
         return not loop.is_closed()
     except RuntimeError:
         return False
-import logging
-import asyncio
-from db import AsyncSessionLocal
-from models import FeatureRequest, GeneratedImage, ScheduledTask, ReflectionLog, ConversationSessions, ConversationHistory, UserPreferences, IntentLogs, DocumentBlob
-from sqlalchemy.future import select
-from sqlalchemy import func
-import uuid
-from typing import Optional
+
 
 # FeatureRequest CRUD
 async def create_feature_request(session, user_id, title, description):
+    """Create a feature request."""
+    from discord_bot import is_event_loop_running, is_shutting_down
+    if is_shutting_down() or not is_event_loop_running():
+        logging.getLogger(__name__).warning(
+            "Skipping DB operation in create_feature_request: shutdown or closed event loop."
+        )
+        return None
     fr = FeatureRequest(user_id=user_id, title=title, description=description)
     session.add(fr)
     await session.commit()
     await session.refresh(fr)
     return fr
 
+
 async def get_feature_request(session, fr_id):
-    result = await session.execute(select(FeatureRequest).where(FeatureRequest.id == fr_id))
+    """Get a feature request by ID."""
+    result = await session.execute(
+        select(FeatureRequest).where(FeatureRequest.id == fr_id)
+    )
     return result.scalar_one_or_none()
 
+
 async def update_feature_request(session, fr_id, **kwargs):
-    result = await session.execute(select(FeatureRequest).where(FeatureRequest.id == fr_id))
+    """Update a feature request."""
+    result = await session.execute(
+        select(FeatureRequest).where(FeatureRequest.id == fr_id)
+    )
     fr = result.scalar_one_or_none()
     if fr:
         for key, value in kwargs.items():
@@ -38,38 +59,44 @@ async def update_feature_request(session, fr_id, **kwargs):
         await session.refresh(fr)
     return fr
 
+
 async def delete_feature_request(session, fr_id):
+    """Delete a feature request."""
     fr = await get_feature_request(session, fr_id)
     if fr:
         await session.delete(fr)
         await session.commit()
     return fr
 
+
 # GeneratedImage CRUD
 async def create_generated_image(session, user_id, image_url, prompt):
-    """
-    Creates a GeneratedImage using the provided session.
-    """
+    """Create a generated image."""
+    from discord_bot import is_event_loop_running, is_shutting_down
+    if is_shutting_down() or not is_event_loop_running():
+        logging.getLogger(__name__).warning(
+            "Skipping DB operation in create_generated_image: shutdown or closed event loop."
+        )
+        return None
     gi = GeneratedImage(user_id=user_id, image_url=image_url, prompt=prompt)
     session.add(gi)
     await session.commit()
     await session.refresh(gi)
     return gi
 
+
 async def get_generated_image(session, gi_id):
-    """
-    Retrieves a GeneratedImage using the provided session.
-    """
-    result = await session.execute(select(GeneratedImage).where(GeneratedImage.id == gi_id))
+    """Get a generated image by ID."""
+    result = await session.execute(
+        select(GeneratedImage).where(GeneratedImage.id == gi_id)
+    )
     return result.scalar_one_or_none()
 
+
 async def update_generated_image(gi_id, **kwargs):
-    """
-    Updates a GeneratedImage in its own async session context.
-    """
-    from db import AsyncSessionLocal
+    """Update a generated image."""
     async with AsyncSessionLocal() as session:
-        gi = await get_generated_image(gi_id)
+        gi = await get_generated_image(session, gi_id)
         if gi:
             for key, value in kwargs.items():
                 setattr(gi, key, value)
@@ -77,24 +104,20 @@ async def update_generated_image(gi_id, **kwargs):
             await session.refresh(gi)
         return gi
 
+
 async def delete_generated_image(gi_id):
-    """
-    Deletes a GeneratedImage in its own async session context.
-    """
-    from db import AsyncSessionLocal
+    """Delete a generated image."""
     async with AsyncSessionLocal() as session:
-        gi = await get_generated_image(gi_id)
+        gi = await get_generated_image(session, gi_id)
         if gi:
             await session.delete(gi)
             await session.commit()
         return gi
 
+
 # ScheduledTask CRUD
 async def create_scheduled_task(user_id, task_name, run_at):
-    """
-    Creates a ScheduledTask in its own async session context.
-    """
-    from db import AsyncSessionLocal
+    """Create a scheduled task."""
     try:
         async with AsyncSessionLocal() as session:
             st = ScheduledTask(user_id=user_id, task_name=task_name, run_at=run_at)
@@ -103,29 +126,29 @@ async def create_scheduled_task(user_id, task_name, run_at):
             await session.refresh(st)
             return st
     except (RuntimeError, AttributeError) as e:
-        import logging
-        logging.getLogger(__name__).warning(f"Skipping DB operation in create_scheduled_task: {e}")
+        logging.getLogger(__name__).warning(
+            f"Skipping DB operation in create_scheduled_task: {e}"
+        )
         return None
+
 
 async def get_scheduled_task(st_id):
-    """
-    Retrieves a ScheduledTask in its own async session context.
-    """
-    from db import AsyncSessionLocal
+    """Get a scheduled task by ID."""
     try:
         async with AsyncSessionLocal() as session:
-            result = await session.execute(select(ScheduledTask).where(ScheduledTask.id == st_id))
+            result = await session.execute(
+                select(ScheduledTask).where(ScheduledTask.id == st_id)
+            )
             return result.scalar_one_or_none()
     except (RuntimeError, AttributeError) as e:
-        import logging
-        logging.getLogger(__name__).warning(f"Skipping DB operation in get_scheduled_task: {e}")
+        logging.getLogger(__name__).warning(
+            f"Skipping DB operation in get_scheduled_task: {e}"
+        )
         return None
 
+
 async def update_scheduled_task(st_id, **kwargs):
-    """
-    Updates a ScheduledTask in its own async session context.
-    """
-    from db import AsyncSessionLocal
+    """Update a scheduled task."""
     try:
         async with AsyncSessionLocal() as session:
             st = await get_scheduled_task(st_id)
@@ -136,15 +159,14 @@ async def update_scheduled_task(st_id, **kwargs):
                 await session.refresh(st)
             return st
     except (RuntimeError, AttributeError) as e:
-        import logging
-        logging.getLogger(__name__).warning(f"Skipping DB operation in update_scheduled_task: {e}")
+        logging.getLogger(__name__).warning(
+            f"Skipping DB operation in update_scheduled_task: {e}"
+        )
         return None
 
+
 async def delete_scheduled_task(st_id):
-    """
-    Deletes a ScheduledTask in its own async session context.
-    """
-    from db import AsyncSessionLocal
+    """Delete a scheduled task."""
     try:
         async with AsyncSessionLocal() as session:
             st = await get_scheduled_task(st_id)
@@ -153,16 +175,15 @@ async def delete_scheduled_task(st_id):
                 await session.commit()
             return st
     except (RuntimeError, AttributeError) as e:
-        import logging
-        logging.getLogger(__name__).warning(f"Skipping DB operation in delete_scheduled_task: {e}")
+        logging.getLogger(__name__).warning(
+            f"Skipping DB operation in delete_scheduled_task: {e}"
+        )
         return None
+
 
 # ReflectionLog CRUD
 async def create_reflection_log(user_id, content):
-    """
-    Creates a ReflectionLog in its own async session context.
-    """
-    from db import AsyncSessionLocal
+    """Create a reflection log."""
     async with AsyncSessionLocal() as session:
         rl = ReflectionLog(user_id=user_id, content=content)
         session.add(rl)
@@ -170,20 +191,18 @@ async def create_reflection_log(user_id, content):
         await session.refresh(rl)
         return rl
 
+
 async def get_reflection_log(rl_id):
-    """
-    Retrieves a ReflectionLog in its own async session context.
-    """
-    from db import AsyncSessionLocal
+    """Get a reflection log by ID."""
     async with AsyncSessionLocal() as session:
-        result = await session.execute(select(ReflectionLog).where(ReflectionLog.id == rl_id))
+        result = await session.execute(
+            select(ReflectionLog).where(ReflectionLog.id == rl_id)
+        )
         return result.scalar_one_or_none()
 
+
 async def update_reflection_log(rl_id, **kwargs):
-    """
-    Updates a ReflectionLog in its own async session context.
-    """
-    from db import AsyncSessionLocal
+    """Update a reflection log."""
     async with AsyncSessionLocal() as session:
         rl = await get_reflection_log(rl_id)
         if rl:
@@ -193,11 +212,9 @@ async def update_reflection_log(rl_id, **kwargs):
             await session.refresh(rl)
         return rl
 
+
 async def delete_reflection_log(rl_id):
-    """
-    Deletes a ReflectionLog in its own async session context.
-    """
-    from db import AsyncSessionLocal
+    """Delete a reflection log."""
     async with AsyncSessionLocal() as session:
         rl = await get_reflection_log(rl_id)
         if rl:
@@ -205,16 +222,13 @@ async def delete_reflection_log(rl_id):
             await session.commit()
         return rl
 
-# ConversationSessions CRUD
 
-async def create_conversation_session(user_id: str, session_id: Optional[str] = None) -> ConversationSessions:
-    """
-    Creates a ConversationSession in its own async session context.
-    """
-    import logging
+# ConversationSessions CRUD
+async def create_conversation_session(
+    user_id: str, session_id: Optional[str] = None
+) -> ConversationSessions:
+    """Create a conversation session."""
     logger = logging.getLogger(__name__)
-    from db import AsyncSessionLocal
-    import uuid
     async with AsyncSessionLocal() as session:
         if session_id is None:
             session_id = str(uuid.uuid4())
@@ -223,32 +237,37 @@ async def create_conversation_session(user_id: str, session_id: Optional[str] = 
         await session.commit()
         await session.refresh(cs)
         logger.info(
-            f"[END] create_conversation_session: user_id={user_id}, created_session_id={cs.id}"
+            f"[END] create_conversation_session: user_id={user_id}, "
+            f"created_session_id={cs.id}"
         )
         return cs
 
+
 async def get_conversation_session(session_id: str) -> Optional[ConversationSessions]:
-    """
-    Retrieves a ConversationSession in its own async session context.
-    """
-    import logging
+    """Get a conversation session by ID."""
     logger = logging.getLogger(__name__)
-    from db import AsyncSessionLocal
     async with AsyncSessionLocal() as session:
-        result = await session.execute(select(ConversationSessions).where(ConversationSessions.id == session_id))
+        result = await session.execute(
+            select(ConversationSessions).where(ConversationSessions.id == session_id)
+        )
         obj = result.scalar_one_or_none()
         logger.info(
-            f"[END] get_conversation_session: target_session_id={session_id}, found={obj is not None}"
+            f"[END] get_conversation_session: target_session_id={session_id}, "
+            f"found={obj is not None}"
         )
         return obj
 
+
 async def get_active_session_for_user(user_id: str) -> Optional[ConversationSessions]:
-    """
-    Retrieves the active ConversationSession for a user in its own async session context.
-    """
-    import logging
+    """Get active conversation session for a user."""
     logger = logging.getLogger(__name__)
-    from db import AsyncSessionLocal
+    from discord_bot import is_shutting_down, is_event_loop_running
+    if is_shutting_down() or not is_event_loop_running():
+        logger.warning(
+            f"Shutdown or closed event loop. Skipping get_active_session_for_user "
+            f"for user {user_id}."
+        )
+        return None
     async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(ConversationSessions)
@@ -258,17 +277,17 @@ async def get_active_session_for_user(user_id: str) -> Optional[ConversationSess
         )
         obj = result.scalars().first()
         logger.info(
-            f"[END] get_active_session_for_user: user_id={user_id}, found={obj is not None}"
+            f"[END] get_active_session_for_user: user_id={user_id}, "
+            f"found={obj is not None}"
         )
         return obj
 
-async def update_session_activity(session_id: str, message_count_increment: int = 1) -> Optional[ConversationSessions]:
-    """
-    Updates session activity in its own async session context.
-    """
-    import logging
+
+async def update_session_activity(
+    session_id: str, message_count_increment: int = 1
+) -> Optional[ConversationSessions]:
+    """Update session activity."""
     logger = logging.getLogger(__name__)
-    from db import AsyncSessionLocal
     async with AsyncSessionLocal() as session:
         try:
             cs = await get_conversation_session(session_id)
@@ -279,20 +298,18 @@ async def update_session_activity(session_id: str, message_count_increment: int 
                 await session.commit()
                 await session.refresh(cs)
             logger.info(
-                f"[END] update_session_activity: target_session_id={session_id}, updated={cs is not None}"
+                f"[END] update_session_activity: target_session_id={session_id}, "
+                f"updated={cs is not None}"
             )
             return cs
         except (RuntimeError, AttributeError) as e:
             logger.warning(f"Skipping DB operation in update_session_activity: {e}")
             return None
 
+
 async def end_conversation_session(session_id: str) -> Optional[ConversationSessions]:
-    """
-    Ends a ConversationSession in its own async session context.
-    """
-    import logging
+    """End a conversation session."""
     logger = logging.getLogger(__name__)
-    from db import AsyncSessionLocal
     async with AsyncSessionLocal() as session:
         cs = await get_conversation_session(session_id)
         if cs:
@@ -301,9 +318,11 @@ async def end_conversation_session(session_id: str) -> Optional[ConversationSess
             await session.commit()
             await session.refresh(cs)
         logger.info(
-            f"[END] end_conversation_session: target_session_id={session_id}, ended={cs is not None}"
+            f"[END] end_conversation_session: target_session_id={session_id}, "
+            f"ended={cs is not None}"
         )
         return cs
+
 
 # ConversationHistory CRUD
 async def create_conversation_message(
@@ -314,12 +333,8 @@ async def create_conversation_message(
     intent: Optional[str] = None,
     confidence: Optional[float] = None
 ) -> ConversationHistory:
-    """
-    Creates a ConversationHistory message in its own async session context.
-    """
-    import logging
+    """Create a conversation message."""
     logger = logging.getLogger(__name__)
-    from db import AsyncSessionLocal
     async with AsyncSessionLocal() as session:
         ch = ConversationHistory(
             session_id=session_id,
@@ -333,17 +348,17 @@ async def create_conversation_message(
         await session.commit()
         await session.refresh(ch)
         logger.info(
-            f"[END] create_conversation_message: session_id={session_id}, user={user_id}, role={role}, message_id={ch.id}"
+            f"[END] create_conversation_message: session_id={session_id}, "
+            f"user={user_id}, role={role}, message_id={ch.id}"
         )
         return ch
 
-async def get_conversation_history(session_id: str, limit: int = 50) -> list[ConversationHistory]:
-    """
-    Retrieves conversation history for a session in its own async session context.
-    """
-    import logging
+
+async def get_conversation_history(
+    session_id: str, limit: int = 50
+) -> list[ConversationHistory]:
+    """Get conversation history for a session."""
     logger = logging.getLogger(__name__)
-    from db import AsyncSessionLocal
     async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(ConversationHistory)
@@ -353,15 +368,16 @@ async def get_conversation_history(session_id: str, limit: int = 50) -> list[Con
         )
         objs = result.scalars().all()
         logger.info(
-            f"[END] get_conversation_history: session_id={session_id}, limit={limit}, count={len(objs)}"
+            f"[END] get_conversation_history: session_id={session_id}, "
+            f"limit={limit}, count={len(objs)}"
         )
         return objs
 
-async def get_user_recent_messages(user_id: str, limit: int = 10) -> list[ConversationHistory]:
-    """
-    Retrieves recent messages for a user in its own async session context.
-    """
-    from db import AsyncSessionLocal
+
+async def get_user_recent_messages(
+    user_id: str, limit: int = 10
+) -> list[ConversationHistory]:
+    """Get recent messages for a user."""
     async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(ConversationHistory)
@@ -371,12 +387,10 @@ async def get_user_recent_messages(user_id: str, limit: int = 10) -> list[Conver
         )
         return result.scalars().all()
 
+
 # UserPreferences CRUD
 async def create_user_preferences(user_id: str, **kwargs) -> UserPreferences:
-    """
-    Creates UserPreferences in its own async session context.
-    """
-    from db import AsyncSessionLocal
+    """Create user preferences."""
     async with AsyncSessionLocal() as session:
         up = UserPreferences(user_id=user_id, **kwargs)
         session.add(up)
@@ -384,24 +398,21 @@ async def create_user_preferences(user_id: str, **kwargs) -> UserPreferences:
         await session.refresh(up)
         return up
 
+
 async def get_user_preferences(user_id: str) -> UserPreferences:
-    """
-    Retrieves UserPreferences in its own async session context.
-    Auto-creates with defaults if not exists.
-    """
-    from db import AsyncSessionLocal
+    """Get user preferences, creating with defaults if not exists."""
     async with AsyncSessionLocal() as session:
-        result = await session.execute(select(UserPreferences).where(UserPreferences.user_id == user_id))
+        result = await session.execute(
+            select(UserPreferences).where(UserPreferences.user_id == user_id)
+        )
         up = result.scalar_one_or_none()
         if up is None:
             up = await create_user_preferences(user_id)
         return up
 
+
 async def update_user_preferences(user_id: str, **kwargs) -> Optional[UserPreferences]:
-    """
-    Updates UserPreferences in its own async session context.
-    """
-    from db import AsyncSessionLocal
+    """Update user preferences."""
     async with AsyncSessionLocal() as session:
         up = await get_user_preferences(user_id)
         if up:
@@ -410,6 +421,7 @@ async def update_user_preferences(user_id: str, **kwargs) -> Optional[UserPrefer
             await session.commit()
             await session.refresh(up)
         return up
+
 
 # IntentLogs CRUD
 async def create_intent_log(
@@ -420,10 +432,7 @@ async def create_intent_log(
     entities: Optional[dict] = None,
     processing_time_ms: Optional[int] = None
 ) -> IntentLogs:
-    """
-    Creates an IntentLog in its own async session context.
-    """
-    from db import AsyncSessionLocal
+    """Create an intent log."""
     async with AsyncSessionLocal() as session:
         il = IntentLogs(
             user_id=user_id,
@@ -438,11 +447,11 @@ async def create_intent_log(
         await session.refresh(il)
         return il
 
-async def get_intent_logs(user_id: Optional[str] = None, limit: int = 100) -> list[IntentLogs]:
-    """
-    Retrieves intent logs in its own async session context.
-    """
-    from db import AsyncSessionLocal
+
+async def get_intent_logs(
+    user_id: Optional[str] = None, limit: int = 100
+) -> list[IntentLogs]:
+    """Get intent logs."""
     async with AsyncSessionLocal() as session:
         query = select(IntentLogs).order_by(IntentLogs.created_at.desc()).limit(limit)
         if user_id is not None:
@@ -450,11 +459,9 @@ async def get_intent_logs(user_id: Optional[str] = None, limit: int = 100) -> li
         result = await session.execute(query)
         return result.scalars().all()
 
+
 async def get_intent_accuracy_stats() -> dict:
-    """
-    Gets average confidence by intent type in its own async session context.
-    """
-    from db import AsyncSessionLocal
+    """Get average confidence by intent type."""
     async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(
@@ -472,12 +479,12 @@ async def get_intent_accuracy_stats() -> dict:
             }
         return stats
 
+
 # DocumentBlob CRUD
-async def create_document_blob(owner_id, name, content_type, data, blob_metadata=None, document=None):
-    """
-    Creates a DocumentBlob in its own async session context.
-    """
-    from db import AsyncSessionLocal
+async def create_document_blob(
+    owner_id, name, content_type, data, blob_metadata=None, document=None
+):
+    """Create a document blob."""
     async with AsyncSessionLocal() as session:
         blob = DocumentBlob(
             owner_id=owner_id,
@@ -492,22 +499,22 @@ async def create_document_blob(owner_id, name, content_type, data, blob_metadata
         await session.refresh(blob)
         return blob
 
+
 async def get_document_blob(blob_id):
-    """
-    Retrieves a DocumentBlob in its own async session context.
-    """
-    from db import AsyncSessionLocal
+    """Get a document blob by ID."""
     async with AsyncSessionLocal() as session:
-        result = await session.execute(select(DocumentBlob).where(DocumentBlob.id == blob_id))
+        result = await session.execute(
+            select(DocumentBlob).where(DocumentBlob.id == blob_id)
+        )
         return result.scalar_one_or_none()
 
+
 async def update_document_blob(blob_id, **kwargs):
-    """
-    Updates a DocumentBlob in its own async session context.
-    """
-    from db import AsyncSessionLocal
+    """Update a document blob."""
     async with AsyncSessionLocal() as session:
-        result = await session.execute(select(DocumentBlob).where(DocumentBlob.id == blob_id))
+        result = await session.execute(
+            select(DocumentBlob).where(DocumentBlob.id == blob_id)
+        )
         blob = result.scalar_one_or_none()
         if blob:
             for key, value in kwargs.items():
@@ -519,11 +526,9 @@ async def update_document_blob(blob_id, **kwargs):
             await session.refresh(blob)
         return blob
 
+
 async def delete_document_blob(blob_id):
-    """
-    Deletes a DocumentBlob in its own async session context.
-    """
-    from db import AsyncSessionLocal
+    """Delete a document blob."""
     async with AsyncSessionLocal() as session:
         blob = await get_document_blob(blob_id)
         if blob:
@@ -531,11 +536,9 @@ async def delete_document_blob(blob_id):
             await session.commit()
         return blob
 
+
 async def list_document_blobs_by_owner(owner_id, limit=50):
-    """
-    Lists DocumentBlobs by owner in its own async session context.
-    """
-    from db import AsyncSessionLocal
+    """List document blobs by owner."""
     async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(DocumentBlob)
