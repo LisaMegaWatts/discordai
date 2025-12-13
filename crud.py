@@ -4,8 +4,15 @@ from typing import Optional
 
 from db import AsyncSessionLocal
 from models import (
-    FeatureRequest, GeneratedImage, ScheduledTask, ReflectionLog,
-    ConversationSessions, ConversationHistory, UserPreferences, IntentLogs, DocumentBlob
+    ConversationHistory,
+    ConversationSessions,
+    DocumentBlob,
+    FeatureRequest,
+    GeneratedImage,
+    IntentLogs,
+    ReflectionLog,
+    ScheduledTask,
+    UserPreferences,
 )
 from sqlalchemy.future import select
 from sqlalchemy import func
@@ -28,7 +35,8 @@ async def create_feature_request(session, user_id, title, description):
     from discord_bot import is_event_loop_running, is_shutting_down
     if is_shutting_down() or not is_event_loop_running():
         logging.getLogger(__name__).warning(
-            "Skipping DB operation in create_feature_request: shutdown or closed event loop."
+            "Skipping DB operation in create_feature_request: shutdown or "
+            "closed event loop."
         )
         return None
     fr = FeatureRequest(user_id=user_id, title=title, description=description)
@@ -75,7 +83,8 @@ async def create_generated_image(session, user_id, image_url, prompt):
     from discord_bot import is_event_loop_running, is_shutting_down
     if is_shutting_down() or not is_event_loop_running():
         logging.getLogger(__name__).warning(
-            "Skipping DB operation in create_generated_image: shutdown or closed event loop."
+            "Skipping DB operation in create_generated_image: shutdown or "
+            "closed event loop."
         )
         return None
     gi = GeneratedImage(user_id=user_id, image_url=image_url, prompt=prompt)
@@ -120,7 +129,11 @@ async def create_scheduled_task(user_id, task_name, run_at):
     """Create a scheduled task."""
     try:
         async with AsyncSessionLocal() as session:
-            st = ScheduledTask(user_id=user_id, task_name=task_name, run_at=run_at)
+            st = ScheduledTask(
+                user_id=user_id,
+                task_name=task_name,
+                run_at=run_at
+            )
             session.add(st)
             await session.commit()
             await session.refresh(st)
@@ -243,12 +256,16 @@ async def create_conversation_session(
         return cs
 
 
-async def get_conversation_session(session_id: str) -> Optional[ConversationSessions]:
+async def get_conversation_session(
+    session_id: str
+) -> Optional[ConversationSessions]:
     """Get a conversation session by ID."""
     logger = logging.getLogger(__name__)
     async with AsyncSessionLocal() as session:
         result = await session.execute(
-            select(ConversationSessions).where(ConversationSessions.id == session_id)
+            select(ConversationSessions).where(
+                ConversationSessions.id == session_id
+            )
         )
         obj = result.scalar_one_or_none()
         logger.info(
@@ -258,14 +275,16 @@ async def get_conversation_session(session_id: str) -> Optional[ConversationSess
         return obj
 
 
-async def get_active_session_for_user(user_id: str) -> Optional[ConversationSessions]:
+async def get_active_session_for_user(
+    user_id: str
+) -> Optional[ConversationSessions]:
     """Get active conversation session for a user."""
     logger = logging.getLogger(__name__)
     from discord_bot import is_shutting_down, is_event_loop_running
     if is_shutting_down() or not is_event_loop_running():
         logger.warning(
-            f"Shutdown or closed event loop. Skipping get_active_session_for_user "
-            f"for user {user_id}."
+            f"Shutdown or closed event loop. Skipping "
+            f"get_active_session_for_user for user {user_id}."
         )
         return None
     async with AsyncSessionLocal() as session:
@@ -298,16 +317,20 @@ async def update_session_activity(
                 await session.commit()
                 await session.refresh(cs)
             logger.info(
-                f"[END] update_session_activity: target_session_id={session_id}, "
-                f"updated={cs is not None}"
+                f"[END] update_session_activity: "
+                f"target_session_id={session_id}, updated={cs is not None}"
             )
             return cs
         except (RuntimeError, AttributeError) as e:
-            logger.warning(f"Skipping DB operation in update_session_activity: {e}")
+            logger.warning(
+                f"Skipping DB operation in update_session_activity: {e}"
+            )
             return None
 
 
-async def end_conversation_session(session_id: str) -> Optional[ConversationSessions]:
+async def end_conversation_session(
+    session_id: str
+) -> Optional[ConversationSessions]:
     """End a conversation session."""
     logger = logging.getLogger(__name__)
     async with AsyncSessionLocal() as session:
@@ -411,7 +434,9 @@ async def get_user_preferences(user_id: str) -> UserPreferences:
         return up
 
 
-async def update_user_preferences(user_id: str, **kwargs) -> Optional[UserPreferences]:
+async def update_user_preferences(
+    user_id: str, **kwargs
+) -> Optional[UserPreferences]:
     """Update user preferences."""
     async with AsyncSessionLocal() as session:
         up = await get_user_preferences(user_id)
@@ -453,7 +478,9 @@ async def get_intent_logs(
 ) -> list[IntentLogs]:
     """Get intent logs."""
     async with AsyncSessionLocal() as session:
-        query = select(IntentLogs).order_by(IntentLogs.created_at.desc()).limit(limit)
+        query = select(IntentLogs).order_by(
+            IntentLogs.created_at.desc()
+        ).limit(limit)
         if user_id is not None:
             query = query.where(IntentLogs.user_id == user_id)
         result = await session.execute(query)
